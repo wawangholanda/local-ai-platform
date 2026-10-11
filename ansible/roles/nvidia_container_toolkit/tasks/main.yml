@@ -1,0 +1,51 @@
+# tasks file for ansible/roles/nvidia_container_toolkit
+---
+- name: Download NVIDIA Container Toolkit signing key
+  ansible.builtin.get_url:
+    url: https://nvidia.github.io/libnvidia-container/gpgkey
+    dest: /usr/share/keyrings/nvidia-container-toolkit-keyring.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Remove malformed NVIDIA repository file
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/nvidia-container-toolkit.sources
+    state: absent
+
+- name: Configure NVIDIA Container Toolkit repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.asc] https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /
+
+- name: Update apt cache after NVIDIA repository
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Install NVIDIA container toolkit
+  ansible.builtin.apt:
+    name:
+      - nvidia-container-toolkit
+    state: present
+
+- name: Configure Docker NVIDIA runtime
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {
+        "runtimes": {
+          "nvidia": {
+            "args": [],
+            "path": "nvidia-container-runtime"
+          }
+        }
+      }
+    validate: "dockerd --validate --config-file %s"
+  notify: Restart Docker

@@ -1,0 +1,10 @@
+---
+- name: Configure Docker and NVIDIA container runtime
+  hosts: ai_servers
+  become: true
+  become_method: sudo
+  gather_facts: true
+
+  roles:
+    - docker
+    - nvidia_container_toolkit

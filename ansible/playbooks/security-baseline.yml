@@ -9,4 +9,3 @@
     - apt_baseline
     - packages_baseline
     - security_baseline
-    - nvidia_gpu

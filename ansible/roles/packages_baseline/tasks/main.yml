@@ -4,8 +4,9 @@
     name:
       - curl
       - wget
-      - htop
       - vim
+      - htop
       - pciutils
+      - python3-debian
     state: present
     update_cache: false
