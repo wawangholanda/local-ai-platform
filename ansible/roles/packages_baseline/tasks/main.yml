@@ -1,0 +1,11 @@
+---
+- name: Install common system utilities
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - htop
+      - vim
+      - pciutils
+    state: present
+    update_cache: false

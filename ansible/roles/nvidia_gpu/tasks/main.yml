@@ -1,0 +1,22 @@
+---
+- name: Install NVIDIA driver dependencies
+  ansible.builtin.apt:
+    name:
+      - linux-headers-amd64
+      - nvidia-driver
+    state: present
+    update_cache: false
+
+- name: Disable nouveau driver
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/blacklist-nouveau.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      blacklist nouveau
+      options nouveau modeset=0
+
+- name: Update initramfs after disabling nouveau
+  ansible.builtin.command:
+    cmd: update-initramfs -u
