@@ -37,13 +37,14 @@ repository.
 
 - [x] Create a dedicated Git repository
 - [x] Establish the initial Ansible directory structure
-- [ ] Document the initial server state and hardware
+- [x] Document the initial server state and hardware
 - [ ] Define inventory, variables, and Ansible conventions
 - [ ] Define storage layout and service ports
 
 ### Phase 2 - Debian Baseline and Security
 
-- [ ] Validate SSH access and privilege escalation
+- [x] Validate SSH access and privilege escalation
+- [x] Harden SSH and validate access before disabling root login
 - [ ] Configure package repositories through Ansible
 - [ ] Apply system updates and install required utilities
 - [ ] Establish a non-root administrative account
@@ -115,6 +116,30 @@ into Ansible before the repository is treated as the source of truth.
 
 The dedicated NVMe SSD was intentionally repurposed for this server; its
 previous data is out of scope.
+
+## Hardware Baseline
+
+Initial hardware discovery:
+
+- Hostname: `debian12ai`
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: Linux 6.1.0-53-amd64
+- Vendor: MSI
+- Model: MS-7972
+- CPU: Intel Core i7-6700 @ 3.40GHz
+- Logical CPUs: 8
+- Memory: 62 GiB RAM
+- Swap: 976 MiB
+
+Storage layout:
+
+| Device | Size | Mount |
+|---|---:|---|
+| nvme0n1p1 | 512 MiB | /boot/efi |
+| nvme0n1p2 | 930.1 GiB | / |
+| nvme0n1p3 | 977 MiB | swap |
+
+This represents the initial state before further Ansible-managed system configuration.
 
 ## Change Workflow
 
