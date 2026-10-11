@@ -1,0 +1,28 @@
+# Python / Ansible
+.venv/
+__pycache__/
+*.py[cod]
+*.retry
+
+# Ansible Vault password files
+.vault-pass
+.vault-password
+vault-password.txt
+
+# Secrets and private keys
+*.secret
+*.secrets
+*.vault-pass
+*.pem
+*.key
+
+# Local overrides
+ansible/inventory/**/host_vars/*secret*
+ansible/inventory/**/group_vars/*secret*
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

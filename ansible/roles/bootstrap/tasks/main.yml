@@ -1,0 +1,10 @@
+---
+- name: Install Python 3 for Ansible module support
+  ansible.builtin.raw: |
+    if command -v python3 >/dev/null 2>&1; then
+      echo "Python 3 is already installed."
+    else
+      apt-get update && apt-get install -y python3
+    fi
+  changed_when: "'Python 3 is already installed.' not in raw_result.stdout"
+  register: raw_result

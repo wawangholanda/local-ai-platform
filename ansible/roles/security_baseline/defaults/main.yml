@@ -1,0 +1,8 @@
+---
+# SSH security policy
+security_ssh_permit_root_login: "no"
+security_ssh_password_authentication: "yes"
+security_ssh_pubkey_authentication: "yes"
+security_ssh_x11_forwarding: "no"
+security_ssh_allow_tcp_forwarding: "yes"
+security_ssh_max_auth_tries: 4

@@ -1,0 +1,7 @@
+# Managed by Ansible: local-ai-platform security baseline
+PermitRootLogin {{ security_ssh_permit_root_login }}
+PasswordAuthentication {{ security_ssh_password_authentication }}
+PubkeyAuthentication {{ security_ssh_pubkey_authentication }}
+X11Forwarding {{ security_ssh_x11_forwarding }}
+AllowTcpForwarding {{ security_ssh_allow_tcp_forwarding }}
+MaxAuthTries {{ security_ssh_max_auth_tries }}

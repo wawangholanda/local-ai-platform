@@ -1,0 +1,18 @@
+---
+- name: Ensure SSH configuration drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy SSH security baseline configuration
+  ansible.builtin.template:
+    src: 99-local-ai-platform.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-local-ai-platform.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Reload SSH service
