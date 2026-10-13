@@ -374,3 +374,25 @@ The state file under `.secrets/tailscale/` contains sensitive node identity mate
 - [Open WebUI backup guidance](https://docs.openwebui.com/tutorials/maintenance/backups/)
 - [Open WebUI SQLite database export/import notes](https://docs.openwebui.com/tutorials/maintenance/database/)
 - [Open WebUI quick start](https://docs.openwebui.com/getting-started/quick-start/)
+
+## Support the Project
+
+If this project helps you learn Platform Engineering, build your own
+infrastructure laboratory, or explore Kubernetes automation, you can
+support its continued development.
+
+### 🇮🇩 Indonesia
+
+Support via QRIS:
+
+![QRIS support](assets/qris.png)
+
+Scan the QRIS code to support the project.
+
+### 🌎 International
+
+International supporters can use Ko-fi:
+
+[☕ Support via Ko-fi](https://ko-fi.com/wawangholanda)
+
+Thank you for supporting open-source learning and continued development of the project.
