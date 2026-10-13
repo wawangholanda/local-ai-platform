@@ -38,6 +38,7 @@ Available phases:
   proxy
   backup-webui
   fetch-webui-backup
+  api-test
   validate
   all
 
@@ -617,6 +618,33 @@ verify_gpu() {
   fi
 }
 
+api_test() {
+  log "Ollama API smoke test"
+
+  command -v ansible >/dev/null ||
+    fail "ansible tidak ditemukan. Aktifkan virtual environment terlebih dahulu."
+
+  [[ -f "$INVENTORY_FILE" ]] ||
+    fail "Inventory tidak ditemukan: $INVENTORY_FILE"
+
+  [[ -f tests/ollama_api_smoke.py ]] ||
+    fail "tests/ollama_api_smoke.py tidak ditemukan."
+
+  ensure_ssh_auth
+
+  log "Copy smoke test to the server"
+  ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
+    -e '{"ansible_become": false}' \
+    -m ansible.builtin.copy \
+    -a "src=$ROOT_DIR/tests/ollama_api_smoke.py dest=/tmp/ollama_api_smoke.py mode=0644"
+
+  log "Run smoke test inside the Docker network"
+  ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
+    -e '{"ansible_become": false}' \
+    -m ansible.builtin.shell \
+    -a 'set -eu; trap "rm -f /tmp/ollama_api_smoke.py" EXIT; docker run --rm --network ai_backend -v /tmp/ollama_api_smoke.py:/tmp/ollama_api_smoke.py:ro -e OLLAMA_API_URL=http://ollama:11434/api/chat python:3.11-slim python /tmp/ollama_api_smoke.py'
+}
+
 validate() {
   log "Validation"
 
@@ -636,6 +664,8 @@ validate() {
   curl -fsS --max-time 20 --output /dev/null \
     --write-out "HTTPS status: %{http_code}\n" \
     "https://${OPEN_WEBUI_DOMAIN}"
+
+  api_test
 }
 
 
@@ -697,6 +727,10 @@ case "$phase" in
   fetch-webui-backup)
     preflight
     fetch_existing_webui_backup
+    ;;
+
+  api-test)
+    api_test
     ;;
 
   validate)

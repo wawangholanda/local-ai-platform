@@ -24,7 +24,7 @@ def main() -> int:
         "messages": [
             {
                 "role": "user",
-                "content": "Balas tepat dengan teks: API siap.",
+                "content": "Jawab singkat dalam bahasa Indonesia. Gunakan satu kalimat pendek untuk menyatakan bahwa API siap. Jangan beri penjelasan atau daftar.",
             }
         ],
         "stream": False,

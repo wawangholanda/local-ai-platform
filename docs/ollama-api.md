@@ -99,3 +99,59 @@ Observed result:
 
 This is a single smoke-test observation, not a performance benchmark.
 Re-run the test after changing the model, Ollama image, or API configuration.
+
+## Python client
+
+The repository includes a small Python client at
+`src/local_ai_platform/ollama_client.py`. It uses only the Python standard
+library and returns the final `message.content` string.
+
+### Run locally
+
+From the repository root, set the source directory on Python's module path:
+
+```bash
+PYTHONPATH=src python -m local_ai_platform.ollama_client \
+  "Balas tepat dengan teks: API siap."
+```
+
+The default URL is `http://ollama:11434/api/chat`. This hostname is
+resolvable only from a container or another environment configured to reach
+the appropriate Docker network. Running the command directly on a workstation
+will not work unless that URL is reachable from the workstation.
+
+### Run inside the Docker network
+
+Copy the client to the AI server from the workstation:
+
+```bash
+ansible ai_servers -e '{"ansible_become": false}' \
+  -m ansible.builtin.copy \
+  -a 'src=src/local_ai_platform/ollama_client.py dest=/tmp/ollama_client.py mode=0644'
+```
+
+Then run it on the server:
+
+```bash
+docker run --rm \
+  --network ai_backend \
+  -v /tmp/ollama_client.py:/tmp/ollama_client.py:ro \
+  -e OLLAMA_API_URL=http://ollama:11434/api/chat \
+  -e OLLAMA_MODEL=qwen3.5:2b-q4_K_M \
+  python:3.11-slim \
+  python /tmp/ollama_client.py "Balas tepat dengan teks: API siap."
+```
+
+The client supports `--url`, `--model`, `--timeout`, and `--num-predict`.
+It exits with status `1` and prints an error to standard error if the request
+fails or the API does not return a completed, non-empty answer.
+
+### Unit tests
+
+Run the unit tests from the repository root:
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+The tests mock HTTP responses and do not require a running Ollama server.
