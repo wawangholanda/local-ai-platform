@@ -1,0 +1,20 @@
+services:
+  open-webui:
+    image: {{ open_webui_image }}
+    container_name: {{ open_webui_container_name }}
+    restart: unless-stopped
+    ports:
+      - "{{ open_webui_bind_address }}:{{ open_webui_port }}:8080"
+    environment:
+      OLLAMA_BASE_URL: "{{ open_webui_ollama_url }}"
+      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY must be set}"
+      ENABLE_SIGNUP: "{{ 'true' if open_webui_enable_signup else 'false' }}"
+    volumes:
+      - "{{ open_webui_data_dir }}:/app/backend/data"
+    networks:
+      - {{ open_webui_network }}
+
+networks:
+  {{ open_webui_network }}:
+    external: true
+

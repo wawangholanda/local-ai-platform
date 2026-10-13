@@ -1,0 +1,14 @@
+---
+ollama_image: "ollama/ollama:0.40.3"
+
+ollama_base_dir: /srv/ai/ollama
+ollama_data_dir: /srv/ai/ollama/data
+ollama_compose_file: /srv/ai/ollama/compose.yml
+
+ollama_network: ai_backend
+ollama_container_name: ollama
+ollama_models:
+  - "qwen3.5:2b-q4_K_M"
+
+ollama_context_length: 4096
+ollama_no_cloud: true

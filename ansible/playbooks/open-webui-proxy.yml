@@ -1,0 +1,9 @@
+---
+- name: Configure private HTTPS access to Open WebUI
+  hosts: ai_servers
+  become: true
+  become_method: sudo
+  gather_facts: true
+
+  roles:
+    - open_webui_reverse_proxy

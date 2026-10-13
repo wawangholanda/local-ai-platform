@@ -1,0 +1,75 @@
+---
+- name: Install Python Docker SDK
+  ansible.builtin.apt:
+    name: python3-docker
+    state: present
+    update_cache: false
+
+- name: Ensure Ollama base directory exists
+  ansible.builtin.file:
+    path: "{{ ollama_base_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Ensure Ollama model directory exists
+  ansible.builtin.file:
+    path: "{{ ollama_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Ensure AI backend network exists
+  community.docker.docker_network:
+    name: "{{ ollama_network }}"
+    driver: bridge
+    state: present
+
+- name: Deploy Ollama Compose configuration
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ ollama_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Validate Ollama Compose configuration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ ollama_compose_file }}"
+      - config
+      - --quiet
+  changed_when: false
+
+- name: Deploy Ollama service
+  community.docker.docker_compose_v2:
+    project_src: "{{ ollama_base_dir }}"
+    files:
+      - compose.yml
+    state: present
+    pull: missing
+
+- name: List installed Ollama models
+  community.docker.docker_container_exec:
+    container: "{{ ollama_container_name }}"
+    argv:
+      - ollama
+      - list
+  register: ollama_model_inventory
+  changed_when: false
+
+- name: Pull configured Ollama models
+  community.docker.docker_container_exec:
+    container: "{{ ollama_container_name }}"
+    argv:
+      - ollama
+      - pull
+      - "{{ item }}"
+    timeout: 3600
+  loop: "{{ ollama_models }}"
+  when: item not in (ollama_model_inventory.stdout_lines | map('split') | map('first') | list)

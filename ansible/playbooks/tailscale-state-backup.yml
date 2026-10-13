@@ -1,0 +1,53 @@
+---
+- name: Back up Tailscale client state securely
+  hosts: ai_servers
+  become: true
+  become_method: sudo
+  gather_facts: false
+
+  vars:
+    tailscale_state_source: /var/lib/tailscale/tailscaled.state
+    tailscale_backup_directory: >-
+      {{ playbook_dir }}/../../.secrets/tailscale/{{ inventory_hostname }}
+    tailscale_backup_destination: >-
+      {{ tailscale_backup_directory }}/tailscaled.state
+
+  tasks:
+    - name: Inspect the current Tailscale state file
+      ansible.builtin.stat:
+        path: "{{ tailscale_state_source }}"
+      register: tailscale_state_stat
+
+    - name: Create a private backup directory on the controller
+      ansible.builtin.file:
+        path: "{{ tailscale_backup_directory }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: tailscale_state_stat.stat.exists
+
+    - name: Fetch the Tailscale state without displaying its contents
+      ansible.builtin.fetch:
+        src: "{{ tailscale_state_source }}"
+        dest: "{{ tailscale_backup_destination }}"
+        flat: true
+        validate_checksum: true
+      no_log: true
+      when: tailscale_state_stat.stat.exists
+
+    - name: Restrict permissions on the local backup
+      ansible.builtin.file:
+        path: "{{ tailscale_backup_destination }}"
+        state: file
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      when: tailscale_state_stat.stat.exists
+
+    - name: Report that no existing state was available
+      ansible.builtin.debug:
+        msg: >-
+          No Tailscale state file exists yet. Backup skipped;
+          a new Tailscale login may be required later.
+      when: not tailscale_state_stat.stat.exists

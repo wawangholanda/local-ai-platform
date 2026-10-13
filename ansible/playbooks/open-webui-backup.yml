@@ -1,0 +1,167 @@
+---
+- name: Create a consistent Open WebUI backup before upgrade
+  hosts: ai_servers
+  become: true
+  become_method: sudo
+  gather_facts: false
+
+  vars:
+    open_webui_backup_source: /srv/ai/open-webui
+    open_webui_backup_remote_file: "/var/tmp/open-webui-pre-v0.12.0-{{ open_webui_backup_stamp }}.tar.gz"
+    open_webui_backup_local_dir: "{{ playbook_dir }}/../../.secrets/open-webui-backups"
+    open_webui_backup_local_file: "{{ open_webui_backup_local_dir }}/open-webui-pre-v0.12.0-{{ open_webui_backup_stamp }}.tar.gz"
+
+  tasks:
+    - name: Generate a fixed backup timestamp
+      ansible.builtin.set_fact:
+        open_webui_backup_stamp: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+
+    - name: Inspect Open WebUI data directory
+      ansible.builtin.stat:
+        path: "{{ open_webui_backup_source }}/data"
+      register: open_webui_backup_data_stat
+
+    - name: Verify data directory exists
+      ansible.builtin.assert:
+        that:
+          - open_webui_backup_data_stat.stat.exists
+          - open_webui_backup_data_stat.stat.isdir
+        fail_msg: "Open WebUI data directory is missing; refusing to back up."
+
+    - name: Verify the running Open WebUI container exists
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - open-webui
+      changed_when: false
+      no_log: true
+
+    - name: Ensure private backup directory exists on controller
+      ansible.builtin.file:
+        path: "{{ open_webui_backup_local_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Check for a remote archive name collision
+      ansible.builtin.stat:
+        path: "{{ open_webui_backup_remote_file }}"
+      register: open_webui_backup_remote_stat
+
+    - name: Refuse to overwrite an existing archive
+      ansible.builtin.assert:
+        that:
+          - not open_webui_backup_remote_stat.stat.exists
+        fail_msg: "Backup archive already exists; retry with a new timestamp."
+
+    - name: Stop, archive, and validate Open WebUI data
+      block:
+        - name: Stop Open WebUI for a consistent backup
+          ansible.builtin.command:
+            argv:
+              - docker
+              - stop
+              - open-webui
+          changed_when: true
+
+        - name: Create a private remote archive placeholder
+          ansible.builtin.file:
+            path: "{{ open_webui_backup_remote_file }}"
+            state: touch
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Archive the complete Open WebUI directory
+          ansible.builtin.command:
+            argv:
+              - tar
+              - -czf
+              - "{{ open_webui_backup_remote_file }}"
+              - -C
+              - "{{ open_webui_backup_source }}"
+              - .
+          changed_when: true
+          no_log: true
+
+        - name: Verify remote archive integrity
+          ansible.builtin.command:
+            argv:
+              - tar
+              - -tzf
+              - "{{ open_webui_backup_remote_file }}"
+          changed_when: false
+          no_log: true
+
+        - name: Allow the SSH user to fetch the verified archive
+          ansible.builtin.file:
+            path: "{{ open_webui_backup_remote_file }}"
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            mode: "0600"
+
+      always:
+        - name: Ensure Open WebUI is running after backup attempt
+          ansible.builtin.command:
+            argv:
+              - docker
+              - start
+              - open-webui
+          changed_when: false
+
+    - name: Fetch archive to the controller without logging its contents
+      ansible.builtin.fetch:
+        src: "{{ open_webui_backup_remote_file }}"
+        dest: "{{ open_webui_backup_local_file }}"
+        flat: true
+        validate_checksum: true
+      become: false
+      no_log: true
+
+    - name: Restrict local archive permissions
+      ansible.builtin.file:
+        path: "{{ open_webui_backup_local_file }}"
+        state: file
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+
+    - name: Verify the fetched archive on the controller
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -tzf
+          - "{{ open_webui_backup_local_file }}"
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+    - name: Inspect the completed local backup
+      ansible.builtin.stat:
+        path: "{{ open_webui_backup_local_file }}"
+      register: open_webui_backup_local_stat
+      delegate_to: localhost
+      become: false
+
+    - name: Verify backup is non-empty and private
+      ansible.builtin.assert:
+        that:
+          - open_webui_backup_local_stat.stat.exists
+          - open_webui_backup_local_stat.stat.size | int > 0
+          - open_webui_backup_local_stat.stat.mode == "0600"
+        fail_msg: "Local backup verification failed; keep the original service unchanged."
+
+    - name: Remove remote temporary archive after successful verification
+      ansible.builtin.file:
+        path: "{{ open_webui_backup_remote_file }}"
+        state: absent
+
+    - name: Report verified backup location
+      ansible.builtin.debug:
+        msg: >-
+          Open WebUI backup verified at {{ open_webui_backup_local_file }}
+          ({{ open_webui_backup_local_stat.stat.size }} bytes).
+          The archive contains sensitive application data and secrets.

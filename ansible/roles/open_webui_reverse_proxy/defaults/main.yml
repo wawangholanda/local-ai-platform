@@ -1,0 +1,18 @@
+---
+# Values are read from the controller environment, loaded by quick-start.sh.
+open_webui_proxy_domain: "{{ lookup('ansible.builtin.env', 'OPEN_WEBUI_DOMAIN') | trim }}"
+
+open_webui_proxy_backend: "http://127.0.0.1:3000"
+
+open_webui_proxy_certificate_name: "local-ai-platform-{{ open_webui_proxy_domain | replace('.', '-') }}"
+open_webui_proxy_certificate_dir: "/etc/letsencrypt/live/{{ open_webui_proxy_certificate_name }}"
+open_webui_proxy_credentials_file: "/etc/letsencrypt/cloudflare-local-ai-platform.ini"
+
+open_webui_proxy_nginx_site_name: "local-ai-open-webui"
+open_webui_proxy_nginx_site_available: "/etc/nginx/sites-available/local-ai-open-webui"
+open_webui_proxy_nginx_site_enabled: "/etc/nginx/sites-enabled/local-ai-open-webui"
+
+open_webui_proxy_tailscale_wait_script: "/usr/local/sbin/wait-for-tailscale-ip.sh"
+open_webui_proxy_systemd_dropin_dir: "/etc/systemd/system/nginx.service.d"
+open_webui_proxy_systemd_dropin: "/etc/systemd/system/nginx.service.d/10-tailscale.conf"
+open_webui_proxy_renewal_hook: "/etc/letsencrypt/renewal-hooks/deploy/reload-nginx"

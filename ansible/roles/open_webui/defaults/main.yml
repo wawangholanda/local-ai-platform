@@ -1,0 +1,17 @@
+---
+open_webui_image: "ghcr.io/open-webui/open-webui:v0.12.0"
+
+open_webui_base_dir: /srv/ai/open-webui
+open_webui_data_dir: /srv/ai/open-webui/data
+open_webui_compose_file: /srv/ai/open-webui/compose.yml
+
+open_webui_network: ai_backend
+open_webui_container_name: open-webui
+
+open_webui_bind_address: "127.0.0.1"
+open_webui_port: 3000
+open_webui_ollama_url: "http://ollama:11434"
+
+open_webui_enable_signup: true
+
+open_webui_env_file: /srv/ai/open-webui/.env

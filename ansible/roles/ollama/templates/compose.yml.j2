@@ -1,0 +1,25 @@
+services:
+  ollama:
+    image: {{ ollama_image }}
+    container_name: {{ ollama_container_name }}
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_CONTEXT_LENGTH: "{{ ollama_context_length }}"
+      OLLAMA_NO_CLOUD: "{{ '1' if ollama_no_cloud else '0' }}"
+    volumes:
+      - "{{ ollama_data_dir }}:/root/.ollama"
+    networks:
+      - {{ ollama_network }}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu
+
+networks:
+  {{ ollama_network }}:
+    external: true

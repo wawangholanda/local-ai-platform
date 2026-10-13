@@ -1,0 +1,45 @@
+---
+- name: Ensure APT keyring directory exists
+  ansible.builtin.file:
+    path: /usr/share/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download Tailscale repository signing key
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/{{ tailscale_repository_track }}/debian/{{ tailscale_distribution }}.noarmor.gpg"
+    dest: "{{ tailscale_keyring_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: tailscale_keyring_download
+
+- name: Configure Tailscale APT repository
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/{{ tailscale_repository_track }}/debian/{{ tailscale_distribution }}.tailscale-keyring.list"
+    dest: "{{ tailscale_repository_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: tailscale_repository_download
+
+- name: Update APT cache after Tailscale repository changes
+  ansible.builtin.apt:
+    update_cache: true
+  when: >-
+    tailscale_keyring_download.changed or
+    tailscale_repository_download.changed
+
+- name: Ensure Tailscale package is installed
+  ansible.builtin.apt:
+    name: "{{ tailscale_package_name }}"
+    state: "{{ tailscale_package_state }}"
+    update_cache: false
+
+- name: Ensure tailscaled service is enabled and running
+  ansible.builtin.service:
+    name: "{{ tailscale_service_name }}"
+    state: started
+    enabled: true

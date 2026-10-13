@@ -1,0 +1,9 @@
+all:
+  children:
+    ai_servers:
+      hosts:
+        ai_server:
+          ansible_host: CHANGE_ME
+          ansible_user: CHANGE_ME
+          ansible_become: true
+          ansible_become_method: sudo

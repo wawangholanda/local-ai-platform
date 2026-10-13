@@ -1,0 +1,85 @@
+---
+- name: Install Python Docker SDK
+  ansible.builtin.apt:
+    name: python3-docker
+    state: present
+    update_cache: false
+
+- name: Ensure Open WebUI base directory exists
+  ansible.builtin.file:
+    path: "{{ open_webui_base_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Ensure Open WebUI data directory exists
+  ansible.builtin.file:
+    path: "{{ open_webui_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Ensure AI backend network exists
+  community.docker.docker_network:
+    name: "{{ open_webui_network }}"
+    driver: bridge
+    state: present
+
+- name: Check whether Open WebUI environment file exists
+  ansible.builtin.stat:
+    path: "{{ open_webui_env_file }}"
+  register: open_webui_env_stat
+
+- name: Generate Open WebUI secret when absent
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "import secrets; print(secrets.token_urlsafe(48))"
+  register: open_webui_generated_secret
+  changed_when: false
+  no_log: true
+  when: not open_webui_env_stat.stat.exists
+
+- name: Create Open WebUI environment file
+  ansible.builtin.copy:
+    dest: "{{ open_webui_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      WEBUI_SECRET_KEY={{ open_webui_generated_secret.stdout }}
+  no_log: true
+  when: not open_webui_env_stat.stat.exists
+
+- name: Deploy Open WebUI Compose configuration
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ open_webui_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Validate Open WebUI Compose configuration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ open_webui_compose_file }}"
+      - config
+      - --quiet
+  args:
+    chdir: "{{ open_webui_base_dir }}"
+  changed_when: false
+
+- name: Deploy Open WebUI service
+  community.docker.docker_compose_v2:
+    project_src: "{{ open_webui_base_dir }}"
+    files:
+      - compose.yml
+    state: present
+    pull: missing
+

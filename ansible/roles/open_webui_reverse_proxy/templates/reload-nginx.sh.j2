@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+if /usr/bin/systemctl is-active --quiet nginx; then
+    /usr/bin/systemctl reload nginx
+fi

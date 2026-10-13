@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+expected_ip="{{ open_webui_proxy_tailscale_ip }}"
+attempt=0
+max_attempts=90
+
+while [ "$attempt" -lt "$max_attempts" ]; do
+    if ip -4 address show dev tailscale0 2>/dev/null |
+        grep -Fq "inet ${expected_ip}/"; then
+        exit 0
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 1
+done
+
+echo "Tailscale IPv4 $expected_ip did not become available in time." >&2
+exit 1
