@@ -1,0 +1,131 @@
+---
+- name: Reset local AI host while preserving downloaded assets
+  hosts: ai_servers
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Capture Docker image IDs before reset
+      ansible.builtin.shell: docker image ls -q --no-trunc | sort -u
+      register: images_before
+      changed_when: false
+
+    - name: Capture APT archive cache size before reset
+      ansible.builtin.shell: du -sb /var/cache/apt/archives | cut -f1
+      register: apt_cache_before
+      changed_when: false
+
+    - name: Gather installed package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Identify installed NVIDIA packages
+      ansible.builtin.set_fact:
+        nvidia_packages_to_remove: >-
+          {{
+            ansible_facts.packages.keys()
+            | select('match',
+              '^(nvidia-|libnvidia-|xserver-xorg-video-nvidia|glx-alternative-nvidia|firmware-nvidia-gsp)')
+            | list
+          }}
+
+    - name: Show NVIDIA packages scheduled for removal
+      ansible.builtin.debug:
+        var: nvidia_packages_to_remove
+
+    - name: Purge NVIDIA drivers and container toolkit
+      ansible.builtin.apt:
+        name: "{{ nvidia_packages_to_remove }}"
+        state: absent
+        purge: true
+        autoremove: false
+      when: nvidia_packages_to_remove | length > 0
+
+    - name: Remove NVIDIA-specific host configuration
+      ansible.builtin.shell: |
+        set -eu
+        for dir in \
+          /etc/modprobe.d \
+          /etc/apt/sources.list.d \
+          /usr/share/keyrings \
+          /etc/ld.so.conf.d \
+          /etc/modules-load.d \
+          /etc/X11/xorg.conf.d
+        do
+          if [ -d "$dir" ]; then
+            find "$dir" -maxdepth 1 -type f \
+              \( -iname '*nvidia*' -o -iname '*nouveau*' \) \
+              -delete
+          fi
+        done
+
+        rm -f /etc/X11/xorg.conf
+      args:
+        executable: /bin/bash
+      register: nvidia_config_cleanup
+      changed_when: true
+
+    - name: Remove Docker NVIDIA runtime configuration
+      ansible.builtin.file:
+        path: /etc/docker/daemon.json
+        state: absent
+
+    - name: Rebuild initramfs after driver and module configuration removal
+      ansible.builtin.command: update-initramfs -u -k all
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Restart Docker with its default runtime configuration
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+        enabled: true
+
+    - name: Verify Docker is active
+      ansible.builtin.command: systemctl is-active docker
+      register: docker_status
+      changed_when: false
+      failed_when: docker_status.stdout != "active"
+
+    - name: Capture Docker image IDs after reset
+      ansible.builtin.shell: docker image ls -q --no-trunc | sort -u
+      register: images_after
+      changed_when: false
+
+    - name: Verify Docker images were preserved
+      ansible.builtin.assert:
+        that:
+          - images_before.stdout == images_after.stdout
+        fail_msg: "Docker image IDs changed during reset. Investigate immediately."
+        success_msg: "All Docker image IDs are preserved."
+
+    - name: Capture APT archive cache size after reset
+      ansible.builtin.shell: du -sb /var/cache/apt/archives | cut -f1
+      register: apt_cache_after
+      changed_when: false
+
+    - name: Verify APT archive cache was preserved
+      ansible.builtin.assert:
+        that:
+          - apt_cache_before.stdout == apt_cache_after.stdout
+        fail_msg: "APT archive cache size changed during reset."
+        success_msg: "APT archive cache size is unchanged."
+
+    - name: Verify no NVIDIA driver or toolkit packages remain
+      ansible.builtin.shell: |
+        dpkg-query -W -f='${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
+          awk '$1 == "installed" &&
+            $2 ~ /^(nvidia-|libnvidia-|xserver-xorg-video-nvidia|glx-alternative-nvidia|firmware-nvidia-gsp)/ {
+              print $2
+            }'
+      register: remaining_nvidia
+      changed_when: false
+      failed_when: remaining_nvidia.stdout | length > 0
+
+    - name: Report reset results
+      ansible.builtin.debug:
+        msg:
+          - "NVIDIA packages and configuration removed."
+          - "Docker remains active."
+          - "Docker image IDs are unchanged."
+          - "APT archive cache size is unchanged."
+          - "NVIDIA package verification passed."

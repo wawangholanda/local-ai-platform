@@ -1,0 +1,21 @@
+---
+local_ai_api_image: "local-ai-api:latest"
+local_ai_api_container_name: local-ai-api
+
+local_ai_api_bind_address: "127.0.0.1"
+local_ai_api_port: 8000
+
+local_ai_api_network: ai_backend
+
+local_ai_api_ollama_url: "http://ollama:11434/api/chat"
+local_ai_api_model: "qwen3.5:2b-q4_K_M"
+
+local_ai_api_data_dir: "/opt/local-ai-api"
+local_ai_api_build_dir: "{{ local_ai_api_data_dir }}/build"
+
+local_ai_api_source_files:
+  - "__init__.py"
+  - "ollama_client.py"
+  - "api/__init__.py"
+  - "api/main.py"
+  - "api/schemas.py"

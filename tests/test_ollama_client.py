@@ -41,6 +41,12 @@ class OllamaClientTests(unittest.TestCase):
         request = mock_urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["model"], "qwen3.5:2b-q4_K_M")
+        self.assertEqual(payload["messages"][0]["role"], "system")
+        self.assertIn("Jawab langsung", payload["messages"][0]["content"])
+        self.assertEqual(
+            payload["messages"][1],
+            {"role": "user", "content": "Balas: API siap."},
+        )
         self.assertFalse(payload["stream"])
         self.assertFalse(payload["think"])
         self.assertEqual(payload["options"]["num_predict"], 256)
@@ -109,6 +115,9 @@ class OllamaClientTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             OllamaClient(num_predict=0)
+
+        with self.assertRaisesRegex(ValueError, "system_prompt must not be empty"):
+            OllamaClient(system_prompt="   ")
 
 
 if __name__ == "__main__":

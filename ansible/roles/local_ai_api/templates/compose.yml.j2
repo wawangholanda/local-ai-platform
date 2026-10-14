@@ -1,0 +1,16 @@
+services:
+  local-ai-api:
+    image: {{ local_ai_api_image }}
+    container_name: {{ local_ai_api_container_name }}
+    restart: unless-stopped
+    ports:
+      - "{{ local_ai_api_bind_address }}:{{ local_ai_api_port }}:8000"
+    environment:
+      OLLAMA_API_URL: "{{ local_ai_api_ollama_url }}"
+      OLLAMA_MODEL: "{{ local_ai_api_model }}"
+    networks:
+      - {{ local_ai_api_network }}
+
+networks:
+  {{ local_ai_api_network }}:
+    external: true

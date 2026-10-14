@@ -1,0 +1,66 @@
+---
+- name: Restore the existing Tailscale client identity
+  hosts: ai_servers
+  become: true
+  become_method: sudo
+  gather_facts: false
+
+  vars:
+    tailscale_state_source: >-
+      {{ playbook_dir }}/../../.secrets/tailscale/debian12ai/tailscaled.state
+    tailscale_state_destination: /var/lib/tailscale/tailscaled.state
+
+  tasks:
+    - name: Inspect the existing local backup
+      ansible.builtin.stat:
+        path: "{{ tailscale_state_source }}"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: tailscale_backup_stat
+      no_log: true
+
+    - name: Require a non-empty existing backup
+      ansible.builtin.assert:
+        that:
+          - tailscale_backup_stat.stat.exists
+          - tailscale_backup_stat.stat.isreg
+          - tailscale_backup_stat.stat.size > 2
+        fail_msg: >-
+          Tailscale backup is missing or invalid. No state was changed.
+
+    - name: Inspect the current remote state
+      ansible.builtin.stat:
+        path: "{{ tailscale_state_destination }}"
+        checksum_algorithm: sha256
+      register: tailscale_current_stat
+      no_log: true
+
+    - name: Stop Tailscale before restoring a different state
+      ansible.builtin.service:
+        name: tailscaled
+        state: stopped
+      when: >-
+        not tailscale_current_stat.stat.exists or
+        tailscale_current_stat.stat.checksum !=
+        tailscale_backup_stat.stat.checksum
+
+    - name: Restore the backed-up Tailscale state securely
+      ansible.builtin.copy:
+        src: "{{ tailscale_state_source }}"
+        dest: "{{ tailscale_state_destination }}"
+        remote_src: false
+        owner: root
+        group: root
+        mode: "0600"
+      when: >-
+        not tailscale_current_stat.stat.exists or
+        tailscale_current_stat.stat.checksum !=
+        tailscale_backup_stat.stat.checksum
+      no_log: true
+
+    - name: Ensure Tailscale is enabled and running
+      ansible.builtin.service:
+        name: tailscaled
+        state: started
+        enabled: true

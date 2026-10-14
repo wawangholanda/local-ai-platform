@@ -9,4 +9,4 @@
       - pciutils
       - python3-debian
     state: present
-    update_cache: false
+    update_cache: true

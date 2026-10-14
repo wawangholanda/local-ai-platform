@@ -1,0 +1,33 @@
+---
+- name: Validate local AI platform workstation
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Verify supported workstation operating system
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.system in ["Linux", "Darwin"]
+        fail_msg: >-
+          Unsupported operating system. Supported systems are Linux
+          and macOS.
+        success_msg: "Workstation OS is supported."
+
+    - name: Verify Python version
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.python.version.major > 3 or
+            (
+              ansible_facts.python.version.major == 3 and
+              ansible_facts.python.version.minor >= 11
+            )
+        fail_msg: "Python 3.11 or newer is required."
+        success_msg: "Workstation Python version is supported."
+
+    - name: Display workstation information
+      ansible.builtin.debug:
+        msg:
+          - "Operating system: {{ ansible_facts.system }}"
+          - "Python version: {{ ansible_facts.python.version.major }}.{{ ansible_facts.python.version.minor }}.{{ ansible_facts.python.version.micro }}"
+          - "Validation completed; no system configuration was changed."

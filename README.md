@@ -225,13 +225,18 @@ A brand-new Tailscale node may require manual enrollment, and a newly installed 
 
 | Command | Purpose |
 |---|---|
+| `./quick-start.sh setup` | Create the workstation virtual environment and install pinned development dependencies |
+| `./quick-start.sh workstation` | Validate workstation OS and Python version |
+| `./quick-start.sh test` | Run local unit tests |
 | `./quick-start.sh preflight` | Check repository prerequisites and required configuration |
 | `./quick-start.sh ansible` | Install collections and syntax-check playbooks |
 | `./quick-start.sh baseline` | Bootstrap Python and apply Debian/security baseline |
 | `./quick-start.sh tailscale` | Back up existing Tailscale state and ensure the client package/service |
 | `./quick-start.sh gpu` | Apply NVIDIA GPU configuration and verify `nvidia-smi` |
 | `./quick-start.sh runtime` | Configure Docker and NVIDIA Container Toolkit after GPU readiness |
-| `./quick-start.sh services` | Deploy Ollama and Open WebUI |
+| `./quick-start.sh services` | Deploy Ollama, the local AI API gateway, and Open WebUI |
+| `./quick-start.sh api-test` | Smoke-test the FastAPI gateway health and chat endpoints on the target |
+| `./quick-start.sh ollama-test` | Run the Ollama API smoke test inside the Docker network |
 | `./quick-start.sh proxy` | Deploy Nginx, Cloudflare DNS automation, and HTTPS |
 | `./quick-start.sh validate` | Check SSH/Ansible connectivity, Tailscale, Docker, GPU, and HTTPS |
 | `./quick-start.sh backup-webui` | Create and fetch a consistent Open WebUI backup before maintenance/upgrades |
@@ -254,6 +259,25 @@ The script asks for the sudo/become password when needed. It uses a temporary pa
 | Open WebUI backup archive | Sensitive application data and config | `.secrets/open-webui-backups/` |
 
 Ollama model weights persist independently of the Open WebUI backup. Back up `/srv/ai/ollama/data` separately if model downloads would be expensive or time-consuming to reproduce.
+
+### Local AI API
+
+The FastAPI gateway provides an HTTP interface to the configured Ollama model:
+
+- `GET http://127.0.0.1:8000/health` — API process health check.
+- `POST http://127.0.0.1:8000/api/chat` — submit a JSON prompt; the response contains `answer` and `model`.
+- `http://127.0.0.1:8000/docs` — interactive API documentation, accessible from the target host.
+
+Example request from the target host:
+
+```bash
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Explain Kubernetes briefly"}'
+```
+
+The API host port is bound to loopback, not the LAN interface. Ollama's API remains internal to the Docker network; do not publish port `11434` to the host or expose the gateway publicly without an intentional authentication and access-control design. The health endpoint checks the API process, not whether Ollama can generate a response.
 
 ## Operating and troubleshooting
 
@@ -377,8 +401,7 @@ The state file under `.secrets/tailscale/` contains sensitive node identity mate
 
 ## Support the Project
 
-If this project helps you learn Platform Engineering, build your own
-infrastructure laboratory, or explore Kubernetes automation, you can
+If this project helps you, you can
 support its continued development.
 
 ### 🇮🇩 Indonesia

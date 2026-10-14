@@ -1,0 +1,123 @@
+---
+- name: Create local AI API directory
+  ansible.builtin.file:
+    path: "{{ local_ai_api_data_dir }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+
+- name: Create local AI API build directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  loop:
+    - "{{ local_ai_api_build_dir }}/docker/local-ai-api"
+    - "{{ local_ai_api_build_dir }}/src"
+
+- name: Deploy local AI API Dockerfile
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../docker/local-ai-api/Dockerfile"
+    dest: "{{ local_ai_api_build_dir }}/docker/local-ai-api/Dockerfile"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  register: local_ai_api_dockerfile_result
+
+- name: Deploy local AI API requirements
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../docker/local-ai-api/requirements.txt"
+    dest: "{{ local_ai_api_build_dir }}/docker/local-ai-api/requirements.txt"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  register: local_ai_api_requirements_result
+
+- name: Ensure local AI API source directories exist
+  ansible.builtin.file:
+    path: "{{ local_ai_api_build_dir }}/src/local_ai_platform/{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  loop:
+    - ""
+    - "api"
+
+- name: Deploy local AI API source files
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../src/local_ai_platform/{{ item }}"
+    dest: "{{ local_ai_api_build_dir }}/src/local_ai_platform/{{ item }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  loop: "{{ local_ai_api_source_files }}"
+  register: local_ai_api_source_result
+
+- name: Find files in local AI API source build directory
+  ansible.builtin.find:
+    paths: "{{ local_ai_api_build_dir }}/src/local_ai_platform"
+    recurse: true
+    hidden: true
+    file_type: file
+  register: local_ai_api_existing_source_files
+
+- name: Find Python cache directories in build context
+  ansible.builtin.find:
+    paths: "{{ local_ai_api_build_dir }}/src/local_ai_platform"
+    recurse: true
+    patterns:
+      - "__pycache__"
+    file_type: directory
+  register: local_ai_api_cache_directories
+
+- name: Remove stale files from local AI API source build directory
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ local_ai_api_existing_source_files.files }}"
+  when: >-
+    (item.path | regex_replace(
+      '^' ~ (local_ai_api_build_dir ~ '/src/local_ai_platform/'),
+      ''
+    )) not in local_ai_api_source_files
+  register: local_ai_api_stale_files_result
+
+- name: Remove Python cache directories from build context
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ local_ai_api_cache_directories.files }}"
+  register: local_ai_api_cache_cleanup_result
+
+- name: Build local AI API image
+  community.docker.docker_image:
+    name: "{{ local_ai_api_image }}"
+    source: build
+    build:
+      path: "{{ local_ai_api_build_dir }}"
+      dockerfile: docker/local-ai-api/Dockerfile
+    force_source: >-
+      {{
+        local_ai_api_dockerfile_result.changed or
+        local_ai_api_requirements_result.changed or
+        local_ai_api_source_result.changed or
+        local_ai_api_stale_files_result.changed or
+        local_ai_api_cache_cleanup_result.changed
+      }}
+
+- name: Deploy local AI API compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ local_ai_api_data_dir }}/compose.yml"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+
+- name: Start local AI API container
+  community.docker.docker_compose_v2:
+    project_src: "{{ local_ai_api_data_dir }}"
+    state: present

@@ -5,6 +5,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
+ANSIBLE_BIN="$ROOT_DIR/.venv/bin/ansible"
+ANSIBLE_PLAYBOOK_BIN="$ROOT_DIR/.venv/bin/ansible-playbook"
+ANSIBLE_GALAXY_BIN="$ROOT_DIR/.venv/bin/ansible-galaxy"
+
+[[ -x "$ANSIBLE_BIN" ]] ||
+  ANSIBLE_BIN="$(command -v ansible || true)"
+[[ -x "$ANSIBLE_PLAYBOOK_BIN" ]] ||
+  ANSIBLE_PLAYBOOK_BIN="$(command -v ansible-playbook || true)"
+[[ -x "$ANSIBLE_GALAXY_BIN" ]] ||
+  ANSIBLE_GALAXY_BIN="$(command -v ansible-galaxy || true)"
+
 INVENTORY_FILE="$ROOT_DIR/ansible/inventory/dev/hosts.yml"
 export INVENTORY_FILE
 
@@ -28,8 +39,11 @@ Usage:
   ./quick-start.sh [phase]
 
 Available phases:
+  setup
+  workstation
   preflight
   ansible
+  test
   baseline
   gpu
   runtime
@@ -38,6 +52,7 @@ Available phases:
   proxy
   backup-webui
   fetch-webui-backup
+  ollama-test
   api-test
   validate
   all
@@ -320,32 +335,33 @@ preflight() {
   [[ -f ansible.cfg ]] || fail "ansible.cfg tidak ditemukan"
   [[ -d ansible/roles ]] || fail "ansible roles tidak ditemukan"
 
-  command -v ansible-playbook >/dev/null \
-    || fail "ansible-playbook tidak ditemukan"
-  command -v ansible-galaxy >/dev/null \
-    || fail "ansible-galaxy tidak ditemukan"
-  command -v ansible >/dev/null \
-    || fail "ansible tidak ditemukan"
+  [[ -n "$ANSIBLE_PLAYBOOK_BIN" && -x "$ANSIBLE_PLAYBOOK_BIN" ]] ||
+    fail "ansible-playbook tidak ditemukan"
+  [[ -n "$ANSIBLE_GALAXY_BIN" && -x "$ANSIBLE_GALAXY_BIN" ]] ||
+    fail "ansible-galaxy tidak ditemukan"
+  [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
+    fail "ansible tidak ditemukan"
 
   load_env
   ensure_target_inventory
 
   echo "Repository : $ROOT_DIR"
   echo "Domain     : $OPEN_WEBUI_DOMAIN"
-  echo "Ansible    : $(ansible-playbook --version | head -n1)"
+  echo "Ansible    : $("$ANSIBLE_PLAYBOOK_BIN" --version | head -n1)"
 }
 
 ansible_prepare() {
   log "Install Ansible collections"
 
-  ansible-galaxy collection install \
+  "$ANSIBLE_GALAXY_BIN" collection install \
     -r ansible/requirements.yml
 
   log "Syntax validation"
 
   for playbook in ansible/playbooks/*.yml; do
     echo "Checking $playbook"
-    ansible-playbook -i "$INVENTORY_FILE" "$playbook" --syntax-check
+    "$ANSIBLE_PLAYBOOK_BIN" \
+      -i "$INVENTORY_FILE" "$playbook" --syntax-check
   done
 }
 
@@ -448,7 +464,7 @@ run_playbook() {
   ensure_ssh_auth
   ask_become_password
 
-  ansible-playbook \
+  "$ANSIBLE_PLAYBOOK_BIN" \
     -i "$INVENTORY_FILE" \
     "${SSH_AUTH_ARGS[@]}" \
     --become-password-file "$BECOME_PASSWORD_FILE" \
@@ -458,7 +474,10 @@ run_playbook() {
 run_ansible() {
   ensure_ssh_auth
   ask_become_password
-  ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" \
+
+  "$ANSIBLE_BIN" \
+    -i "$INVENTORY_FILE" \
+    "${SSH_AUTH_ARGS[@]}" \
     --become-password-file "$BECOME_PASSWORD_FILE" "$@"
 }
 
@@ -483,7 +502,7 @@ fetch_existing_webui_backup() {
   echo "Checking /var/tmp on the configured AI server through Ansible; verbose output follows."
 
   if ! listing="$(
-    ANSIBLE_TIMEOUT=15 ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
+    ANSIBLE_TIMEOUT=15 "$ANSIBLE_BIN" -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
       -e '{"ansible_become": false}' \
       -m shell \
       -a "find /var/tmp -maxdepth 1 -type f -name 'open-webui-pre-v0.12.0-*.tar.gz' -printf '%T@|%s|%p\\n' | sort -nr | head -n1 | cut -d'|' -f2-" \
@@ -520,7 +539,7 @@ fetch_existing_webui_backup() {
   log "Step 2/4: Fetch archive (Ansible verbosity level 3)"
   echo "The transfer will run in the foreground; progress is reported below."
 
-  ANSIBLE_TIMEOUT=30 ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" -vvv ai_servers \
+  ANSIBLE_TIMEOUT=30 "$ANSIBLE_BIN" -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" -vvv ai_servers \
     -e '{"ansible_become": false}' \
     -m ansible.builtin.fetch \
     -a "src=${remote_archive} dest=${backup_dir}/ flat=true validate_checksum=true" &
@@ -580,7 +599,7 @@ fetch_existing_webui_backup() {
   echo "Calculating checksum on the remote archive; this reads the complete file."
 
   if ! remote_hash_output="$(
-    ANSIBLE_TIMEOUT=60 ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
+    ANSIBLE_TIMEOUT=60 "$ANSIBLE_BIN" -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
       -e '{"ansible_become": false}' \
       -m command \
       -a "sha256sum ${remote_archive}" 2>&1
@@ -618,11 +637,95 @@ verify_gpu() {
   fi
 }
 
-api_test() {
+setup_workstation() {
+  log "Local workstation setup"
+
+  local os_name=""
+  local python_bin=""
+  local python_version=""
+
+  os_name="$(uname -s)"
+  case "$os_name" in
+    Linux|Darwin) ;;
+    *) fail "OS tidak didukung: $os_name (dukungan: Linux dan macOS)." ;;
+  esac
+
+  if command -v python3 >/dev/null 2>&1; then
+    python_bin="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    python_bin="$(command -v python)"
+  else
+    fail "Python 3 tidak ditemukan. Instal Python 3.11+ lalu jalankan setup kembali."
+  fi
+
+  python_version="$("$python_bin" -c '
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+')"
+
+  "$python_bin" -c '
+import sys
+if sys.version_info < (3, 11):
+    raise SystemExit("Python 3.11 atau lebih baru diperlukan.")
+' || fail "Python $python_version tidak didukung; diperlukan Python 3.11+."
+
+  if [[ -e "$ROOT_DIR/.venv" ]]; then
+    [[ -x "$ROOT_DIR/.venv/bin/python" ]] ||
+      fail ".venv sudah ada tetapi bukan virtual environment Unix yang valid. Periksa secara manual; tidak dihapus."
+  else
+    "$python_bin" -m venv "$ROOT_DIR/.venv" ||
+      fail "Gagal membuat .venv. Pastikan dukungan venv tersedia."
+  fi
+
+  [[ -f "$ROOT_DIR/requirements-dev.txt" ]] ||
+    fail "File dependensi tidak ditemukan: requirements-dev.txt"
+
+  log "Installing workstation dependencies"
+  "$ROOT_DIR/.venv/bin/python" -m pip install \
+    -r "$ROOT_DIR/requirements-dev.txt" ||
+    fail "Gagal memasang dependensi workstation."
+
+  log "Workstation environment ready"
+  printf 'OS: %s\n' "$os_name"
+  printf 'Base Python: %s\n' "$python_version"
+  printf 'Virtual environment: %s/.venv\n' "$ROOT_DIR"
+  printf 'Ansible: %s\n' "$("$ROOT_DIR/.venv/bin/ansible" --version | head -n 1)"
+  printf '\nAktifkan dengan:\n'
+  printf '  source .venv/bin/activate\n'
+  printf 'Lalu jalankan tes:\n'
+  printf '  ./quick-start.sh test\n'
+}
+
+unit_test() {
+  log "Local Python unit tests"
+
+  local python_bin=""
+
+  if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    python_bin="$ROOT_DIR/.venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    python_bin="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    python_bin="$(command -v python)"
+  else
+    fail "Python tidak ditemukan. Jalankan ./quick-start.sh setup terlebih dahulu."
+  fi
+
+  [[ -d "$ROOT_DIR/tests" ]] ||
+    fail "Direktori unit test tidak ditemukan: tests/"
+
+  log "Python interpreter: $python_bin"
+
+  PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$python_bin" -m unittest discover \
+      -s "$ROOT_DIR/tests" -p 'test_*.py' -v
+}
+
+ollama_test() {
   log "Ollama API smoke test"
 
-  command -v ansible >/dev/null ||
-    fail "ansible tidak ditemukan. Aktifkan virtual environment terlebih dahulu."
+  [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
+    fail "ansible tidak ditemukan. Jalankan ./quick-start.sh setup terlebih dahulu."
 
   [[ -f "$INVENTORY_FILE" ]] ||
     fail "Inventory tidak ditemukan: $INVENTORY_FILE"
@@ -633,18 +736,39 @@ api_test() {
   ensure_ssh_auth
 
   log "Copy smoke test to the server"
-  ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
+  "$ANSIBLE_BIN" -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
     -e '{"ansible_become": false}' \
     -m ansible.builtin.copy \
     -a "src=$ROOT_DIR/tests/ollama_api_smoke.py dest=/tmp/ollama_api_smoke.py mode=0644"
 
   log "Run smoke test inside the Docker network"
-  ansible -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
+  "$ANSIBLE_BIN" -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
     -e '{"ansible_become": false}' \
     -m ansible.builtin.shell \
     -a 'set -eu; trap "rm -f /tmp/ollama_api_smoke.py" EXIT; docker run --rm --network ai_backend -v /tmp/ollama_api_smoke.py:/tmp/ollama_api_smoke.py:ro -e OLLAMA_API_URL=http://ollama:11434/api/chat python:3.11-slim python /tmp/ollama_api_smoke.py'
 }
 
+
+api_test() {
+  log "FastAPI gateway smoke test"
+
+  [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
+    fail "ansible tidak ditemukan. Jalankan ./quick-start.sh setup terlebih dahulu."
+
+  [[ -f "$INVENTORY_FILE" ]] ||
+    fail "Inventory tidak ditemukan: $INVENTORY_FILE"
+
+  [[ -f "$ROOT_DIR/tests/local_ai_api_smoke.py" ]] ||
+    fail "tests/local_ai_api_smoke.py tidak ditemukan."
+
+  ensure_ssh_auth
+
+  log "Test FastAPI through host loopback"
+  "$ANSIBLE_BIN" -i "$INVENTORY_FILE" "${SSH_AUTH_ARGS[@]}" ai_servers -o \
+    -e '{"ansible_become": false}' \
+    -m ansible.builtin.script \
+    -a "$ROOT_DIR/tests/local_ai_api_smoke.py"
+}
 validate() {
   log "Validation"
 
@@ -672,6 +796,17 @@ validate() {
 phase="${1:-all}"
 
 case "$phase" in
+  setup)
+    setup_workstation
+    ;;
+
+  workstation)
+    [[ -x "$ROOT_DIR/.venv/bin/ansible-playbook" ]] ||
+      fail "Ansible belum tersedia. Jalankan ./quick-start.sh setup terlebih dahulu."
+    "$ROOT_DIR/.venv/bin/ansible-playbook" \
+      -i localhost, "$ROOT_DIR/ansible/playbooks/workstation.yml"
+    ;;
+
   preflight)
     preflight
     ;;
@@ -729,6 +864,13 @@ case "$phase" in
     fetch_existing_webui_backup
     ;;
 
+  test)
+    unit_test
+    ;;
+
+  ollama-test)
+    ollama_test
+    ;;
   api-test)
     api_test
     ;;

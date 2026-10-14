@@ -31,6 +31,13 @@ class OllamaClient:
         model: str = DEFAULT_MODEL,
         timeout: float = DEFAULT_TIMEOUT,
         num_predict: int = 256,
+        system_prompt: str = (
+            "Kamu adalah asisten AI yang membantu pengguna. "
+            "Jawab langsung sesuai pertanyaan dan gunakan bahasa pengguna. "
+            "Jangan menambahkan klaim atau penjelasan yang tidak diminta. "
+            "Jika pengguna meminta keluaran dengan teks persis, keluarkan "
+            "hanya teks tersebut. Jika tidak yakin, katakan dengan jujur."
+        ),
     ) -> None:
         if not api_url.startswith(("http://", "https://")):
             raise ValueError("api_url must use HTTP or HTTPS")
@@ -43,8 +50,12 @@ class OllamaClient:
 
         self.api_url = api_url
         self.model = model
+        if not isinstance(system_prompt, str) or not system_prompt.strip():
+            raise ValueError("system_prompt must not be empty")
+
         self.timeout = timeout
         self.num_predict = num_predict
+        self.system_prompt = system_prompt.strip()
 
     def chat(self, prompt: str) -> str:
         """Send a prompt and return the model's final answer text."""
@@ -53,7 +64,10 @@ class OllamaClient:
 
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt},
+            ],
             "stream": False,
             "think": False,
             "options": {"num_predict": self.num_predict},

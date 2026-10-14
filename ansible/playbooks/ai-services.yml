@@ -7,4 +7,5 @@
 
   roles:
     - ollama
+    - local_ai_api
     - open_webui

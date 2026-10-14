@@ -1,0 +1,8 @@
+# Reuse pinned runtime dependencies for the FastAPI gateway.
+-r docker/local-ai-api/requirements.txt
+
+# Local workstation tooling
+ansible-core==2.21.2
+
+# FastAPI TestClient dependency
+httpx==0.28.1

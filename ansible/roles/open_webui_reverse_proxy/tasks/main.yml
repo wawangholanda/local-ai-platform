@@ -366,17 +366,24 @@
       - --write-out
       - "%{http_code}"
       - --max-time
-      - "30"
+      - "10"
       - --resolve
       - "{{ open_webui_proxy_domain }}:443:{{ open_webui_proxy_tailscale_ip }}"
       - "https://{{ open_webui_proxy_domain }}/"
   register: open_webui_proxy_https_check
   changed_when: false
+  failed_when: false
+  retries: 12
+  delay: 5
+  until:
+    - open_webui_proxy_https_check.rc == 0
+    - open_webui_proxy_https_check.stdout is match('^[23][0-9][0-9]$')
 
 - name: Assert that the HTTPS endpoint responds successfully
   ansible.builtin.assert:
     that:
+      - open_webui_proxy_https_check.rc == 0
       - open_webui_proxy_https_check.stdout is match('^[23][0-9][0-9]$')
     fail_msg: >-
-      HTTPS did not return a 2xx or 3xx response. Check Nginx, the
-      certificate, Open WebUI, and the Tailscale interface.
+      HTTPS did not return a 2xx or 3xx response after retries.
+      Check Nginx, the certificate, Open WebUI, and the Tailscale interface.
