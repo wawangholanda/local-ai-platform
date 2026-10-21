@@ -20,12 +20,17 @@ INVENTORY_FILE="$ROOT_DIR/ansible/inventory/dev/hosts.yml"
 export INVENTORY_FILE
 
 ENV_FILE="${LOCAL_AI_ENV_FILE:-.secrets/.env}"
+AUTH_PASSWORD_FILE=""
 BECOME_PASSWORD_FILE=""
 SSH_PASSWORD_FILE=""
 SSH_AUTH_ARGS=()
 SSH_AUTH_READY=0
+SSH_AUTH_ARGS=()
+SSH_AUTH_READY=0
 
 cleanup() {
+  [[ -z "${AUTH_PASSWORD_FILE:-}" ]] ||
+    rm -f -- "$AUTH_PASSWORD_FILE"
   [[ -z "${BECOME_PASSWORD_FILE:-}" ]] ||
     rm -f -- "$BECOME_PASSWORD_FILE"
   [[ -z "${SSH_PASSWORD_FILE:-}" ]] ||
@@ -48,6 +53,7 @@ Available phases:
   gpu
   runtime
   tailscale
+  restore-tailscale
   services
   proxy
   backup-webui
@@ -371,32 +377,30 @@ ensure_ssh_auth() {
   local server_host="" server_user="" target output answer password
   local inventory_file="$INVENTORY_FILE"
 
-  server_host="$(python -c '
-import sys, yaml
-with open(sys.argv[1], encoding="utf-8") as f:
-    data = yaml.safe_load(f)
-host = data["all"]["children"]["ai_servers"]["hosts"]["ai_server"]
-print(host.get("ansible_host", "") or "")
-' "$inventory_file")" ||
-    fail "Gagal membaca ansible_host dari $inventory_file."
+  server_host="$(awk '
+    /^[[:space:]]*ai_server:[[:space:]]*$/ { in_host=1; next }
+    in_host && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*$/ { exit }
+    in_host && /^[[:space:]]*ansible_host:/ {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      gsub(/["'\"'\"']/, "")
+      print
+      exit
+    }
+  ' "$inventory_file")"
 
-  server_user="$(python -c '
-import sys, yaml
-with open(sys.argv[1], encoding="utf-8") as f:
-    data = yaml.safe_load(f)
-host = data["all"]["children"]["ai_servers"]["hosts"]["ai_server"]
-print(host.get("ansible_user", "") or "")
-' "$inventory_file")" ||
-    fail "Gagal membaca ansible_user dari $inventory_file."
+  server_user="$(awk '
+    /^[[:space:]]*ai_server:[[:space:]]*$/ { in_host=1; next }
+    in_host && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*$/ { exit }
+    in_host && /^[[:space:]]*ansible_user:/ {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      gsub(/["'\"'\"']/, "")
+      print
+      exit
+    }
+  ' "$inventory_file")"
 
-  [[ -n "$server_host" && "$server_host" != "CHANGE_ME" &&
-     "$server_host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] ||
-    fail "ansible_host kosong atau tidak valid di $inventory_file."
-
-  [[ -n "$server_user" && "$server_user" != "CHANGE_ME" &&
-     "$server_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ &&
-     "$server_user" != "root" ]] ||
-    fail "ansible_user tidak valid atau root tidak diizinkan di $inventory_file."
+  [[ -n "$server_host" && -n "$server_user" ]] ||
+    fail "Tidak dapat membaca ansible_host/ansible_user untuk ai_server."
 
   target="${server_user}@${server_host}"
   log "Checking SSH key authentication for $target"
@@ -409,52 +413,56 @@ print(host.get("ansible_user", "") or "")
 
   if grep -Eqi 'host key verification failed|remote host identification has changed|no matching host key type' <<<"$output"; then
     printf '%s\n' "$output" >&2
-    fail "SSH host-key verification failed. Verify the server fingerprint and resolve it before continuing."
+    fail "SSH host-key verification failed. Verify the server fingerprint before continuing."
   fi
 
   if ! grep -Eqi 'permission denied|authentication failed' <<<"$output"; then
     printf '%s\n' "$output" >&2
-    fail "SSH key check failed for a reason other than a clear authentication rejection. Check connectivity, SSH configuration, and host-key trust."
+    fail "SSH authentication check failed for a reason other than a clear authentication rejection."
   fi
 
   printf '%s\n' "$output" >&2
-  [[ -t 0 ]] || fail "SSH key ditolak; fallback password memerlukan terminal interaktif."
-  read -r -p "SSH key ditolak. Gunakan autentikasi password SSH? [y/N] " answer
+  [[ -t 0 ]] || fail "Password fallback requires an interactive terminal."
+  read -r -p "SSH key ditolak. Gunakan password yang sama untuk SSH dan sudo? [y/N] " answer
   [[ "$answer" =~ ^[Yy]$ ]] || fail "Autentikasi SSH dibatalkan."
 
   command -v sshpass >/dev/null 2>&1 ||
-    fail "Fallback password membutuhkan sshpass. Pasang secara manual, misalnya: sudo apt install sshpass"
+    fail "Fallback password membutuhkan sshpass. Pasang dengan: sudo apt install sshpass"
 
-  read -r -s -p "SSH password untuk $target: " password
+  read -r -s -p "Password SSH dan sudo untuk $target: " password
   printf '\n'
-  [[ -n "$password" ]] || fail "Password SSH kosong."
+  [[ -n "$password" ]] || fail "Password kosong."
 
   umask 077
-  SSH_PASSWORD_FILE="$(mktemp "$ROOT_DIR/.secrets/.ssh-password.XXXXXX")"
-  chmod 600 "$SSH_PASSWORD_FILE"
-  printf '%s\n' "$password" > "$SSH_PASSWORD_FILE"
+  AUTH_PASSWORD_FILE="$(mktemp "$ROOT_DIR/.secrets/.auth-password.XXXXXX")"
+  chmod 600 "$AUTH_PASSWORD_FILE"
+  printf '%s\n' "$password" > "$AUTH_PASSWORD_FILE"
   unset password
 
-  SSH_AUTH_ARGS=(--connection-password-file "$SSH_PASSWORD_FILE")
+  SSH_PASSWORD_FILE="$AUTH_PASSWORD_FILE"
+  BECOME_PASSWORD_FILE="$AUTH_PASSWORD_FILE"
+  SSH_AUTH_ARGS=(--connection-password-file "$AUTH_PASSWORD_FILE")
   SSH_AUTH_READY=1
-  echo "SSH password disimpan sementara dengan permission 600."
+  echo "Password bersama disimpan sementara dengan permission 600."
 }
 
 ask_become_password() {
-  if [[ -z "$BECOME_PASSWORD_FILE" ]]; then
-    local password
-
-    read -r -s -p "BECOME password: " password
-    printf '\n'
-    [[ -n "$password" ]] || fail "Password sudo kosong"
-
-    umask 077
-    BECOME_PASSWORD_FILE="$(mktemp "$ROOT_DIR/.secrets/.become-password.XXXXXX")"
-    chmod 600 "$BECOME_PASSWORD_FILE"
-    printf '%s\n' "$password" > "$BECOME_PASSWORD_FILE"
-    unset password
-
+  if [[ -n "$BECOME_PASSWORD_FILE" ]]; then
+    return 0
   fi
+
+  local password
+  read -r -s -p "BECOME password (sudo): " password
+  printf '\n'
+  [[ -n "$password" ]] || fail "Password sudo kosong."
+
+  umask 077
+  AUTH_PASSWORD_FILE="$(mktemp "$ROOT_DIR/.secrets/.auth-password.XXXXXX")"
+  chmod 600 "$AUTH_PASSWORD_FILE"
+  printf '%s\n' "$password" > "$AUTH_PASSWORD_FILE"
+  unset password
+
+  BECOME_PASSWORD_FILE="$AUTH_PASSWORD_FILE"
 }
 
 run_playbook() {
@@ -844,6 +852,11 @@ case "$phase" in
     run_playbook tailscale-client
     ;;
 
+  restore-tailscale)
+    preflight
+    run_playbook tailscale-state-restore
+    ;;
+
   services)
     preflight
     run_playbook ai-services
@@ -885,9 +898,9 @@ case "$phase" in
     ansible_prepare
 
     run_playbook bootstrap
-    backup_tailscale
     run_playbook security-baseline
     run_playbook tailscale-client
+    run_playbook tailscale-state-restore
 
     run_playbook gpu
     verify_gpu

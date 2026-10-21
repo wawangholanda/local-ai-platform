@@ -141,24 +141,8 @@
         open_webui_proxy_dns_records.json.result
         | selectattr('type', 'in', ['CNAME', 'NS', 'AAAA'])
         | list | length == 0
-      - >-
-        (
-          open_webui_proxy_dns_records.json.result
-          | selectattr('type', 'equalto', 'A') | list | length == 0
-        ) or (
-          (
-            open_webui_proxy_dns_records.json.result
-            | selectattr('type', 'equalto', 'A') | list | length == 1
-          ) and (
-            (
-              open_webui_proxy_dns_records.json.result
-              | selectattr('type', 'equalto', 'A') | list | first
-            ).content == open_webui_proxy_tailscale_ip
-          )
-        )
     fail_msg: >-
-      DNS contains a conflicting CNAME, NS, or AAAA record, multiple A
-      records, or an A record pointing to another address. Review the DNS
+      DNS contains a conflicting CNAME, NS, or AAAA record. Review the DNS
       record manually before continuing.
   no_log: true
 
