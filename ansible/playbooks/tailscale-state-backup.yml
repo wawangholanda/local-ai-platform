@@ -17,6 +17,58 @@
       ansible.builtin.stat:
         path: "{{ tailscale_state_source }}"
       register: tailscale_state_stat
+      no_log: true
+
+    - name: Require a valid remote Tailscale state file
+      ansible.builtin.assert:
+        that:
+          - tailscale_state_stat.stat.exists
+          - tailscale_state_stat.stat.isreg
+          - tailscale_state_stat.stat.size > 2
+        fail_msg: >-
+          Remote Tailscale state is missing or invalid. No local backup changed.
+      when: tailscale_state_stat.stat.exists
+      no_log: true
+
+    - name: Inspect the existing canonical local backup
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}"
+      delegate_to: localhost
+      become: false
+      register: tailscale_backup_stat
+      no_log: true
+
+    - name: Preserve the existing canonical backup
+      ansible.builtin.assert:
+        that:
+          - tailscale_backup_stat.stat.isreg | default(false)
+          - tailscale_backup_stat.stat.size | default(0) > 2
+        fail_msg: >-
+          An existing canonical backup is invalid or is not a regular file.
+          It was preserved; inspect it manually before proceeding.
+      when:
+        - tailscale_state_stat.stat.exists
+        - tailscale_backup_stat.stat.exists
+      no_log: true
+
+    - name: Inspect any leftover staging file
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}.new"
+      delegate_to: localhost
+      become: false
+      register: tailscale_staging_stat
+      no_log: true
+
+    - name: Refuse to overwrite an existing staging file
+      ansible.builtin.assert:
+        that:
+          - not (tailscale_staging_stat.stat.exists | default(false) | bool)
+        fail_msg: >-
+          A staging file already exists. It was not modified or deleted.
+          Inspect it manually before retrying the backup.
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
 
     - name: Create a private backup directory on the controller
       ansible.builtin.file:
@@ -25,25 +77,107 @@
         mode: "0700"
       delegate_to: localhost
       become: false
-      when: tailscale_state_stat.stat.exists
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
 
-    - name: Fetch the Tailscale state without displaying its contents
+    - name: Fetch Tailscale state into a new staging file
       ansible.builtin.fetch:
         src: "{{ tailscale_state_source }}"
-        dest: "{{ tailscale_backup_destination }}"
+        dest: "{{ tailscale_backup_destination }}.new"
         flat: true
         validate_checksum: true
       no_log: true
-      when: tailscale_state_stat.stat.exists
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
 
-    - name: Restrict permissions on the local backup
+    - name: Validate the downloaded staging file
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}.new"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: tailscale_staging_validation
+      no_log: true
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
+
+    - name: Require a non-empty staging file
+      ansible.builtin.assert:
+        that:
+          - tailscale_staging_validation.stat.exists
+          - tailscale_staging_validation.stat.isreg
+          - tailscale_staging_validation.stat.size > 2
+        fail_msg: >-
+          Downloaded staging file is invalid. The canonical backup was not changed.
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
+      no_log: true
+
+    - name: Restrict permissions on the staging file
       ansible.builtin.file:
-        path: "{{ tailscale_backup_destination }}"
+        path: "{{ tailscale_backup_destination }}.new"
         state: file
         mode: "0600"
       delegate_to: localhost
       become: false
-      when: tailscale_state_stat.stat.exists
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
+
+    - name: Publish the new backup without replacing an existing file
+      ansible.builtin.copy:
+        src: "{{ tailscale_backup_destination }}.new"
+        dest: "{{ tailscale_backup_destination }}"
+        remote_src: false
+        force: false
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
+      no_log: true
+
+    - name: Inspect the published standalone backup
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: tailscale_published_backup_stat
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
+      no_log: true
+
+    - name: Verify published backup matches its staging file
+      ansible.builtin.assert:
+        that:
+          - tailscale_published_backup_stat.stat.isreg
+          - tailscale_published_backup_stat.stat.size > 2
+          - >-
+            tailscale_published_backup_stat.stat.checksum ==
+            tailscale_staging_validation.stat.checksum
+        fail_msg: >-
+          Published backup does not match the staging file. Both files
+          have been preserved for manual inspection.
+      when:
+        - tailscale_state_stat.stat.exists
+        - not (tailscale_backup_stat.stat.exists | default(false) | bool)
+      no_log: true
+
+    - name: Report that the existing backup was preserved
+      ansible.builtin.debug:
+        msg: >-
+          An existing Tailscale backup was preserved. Automatic refresh is
+          disabled to avoid replacing the saved identity.
+      when:
+        - tailscale_state_stat.stat.exists
+        - tailscale_backup_stat.stat.exists
 
     - name: Report that no existing state was available
       ansible.builtin.debug:

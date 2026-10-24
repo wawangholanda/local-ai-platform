@@ -25,8 +25,7 @@ BECOME_PASSWORD_FILE=""
 SSH_PASSWORD_FILE=""
 SSH_AUTH_ARGS=()
 SSH_AUTH_READY=0
-SSH_AUTH_ARGS=()
-SSH_AUTH_READY=0
+SSH_HOST_KEY_ARGS=()
 
 cleanup() {
   [[ -z "${AUTH_PASSWORD_FILE:-}" ]] ||
@@ -235,38 +234,56 @@ PYINVENTORY
 }
 
 load_env() {
-  local env_dir=".secrets"
-  local example_file=".secrets/.env.example"
+  local env_file_dir=""
   local domain_default=""
   local entered_domain=""
   local temp_env=""
+  local source_status=0
 
-  mkdir -p "$env_dir"
-  chmod 700 "$env_dir"
-
-  # Do not silently rely on inherited values from the user's shell.
+  # Prevent accidental dependence on inherited shell values.
   CLOUDFLARE_API_TOKEN=""
   OPEN_WEBUI_DOMAIN=""
 
-  if [[ -f "$ENV_FILE" ]]; then
-    chmod 600 "$ENV_FILE"
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
+  env_file_dir="$(dirname -- "$ENV_FILE")"
+
+  [[ -n "$ENV_FILE" && "$ENV_FILE" != "/" ]] ||
+    fail "Path file konfigurasi tidak valid."
+
+  mkdir -p -- "$env_file_dir" ||
+    fail "Tidak dapat membuat direktori konfigurasi: $env_file_dir"
+
+  if [[ "$ENV_FILE" == ".secrets/.env" ]]; then
+    chmod 700 "$env_file_dir" ||
+      fail "Tidak dapat mengamankan direktori konfigurasi."
   fi
 
-  # Read a suggested domain from the tracked example file, if available.
-  if [[ -z "${OPEN_WEBUI_DOMAIN:-}" && -f "$example_file" ]]; then
+  if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
+    [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" && -r "$ENV_FILE" ]] ||
+      fail "File konfigurasi bukan file biasa atau tidak dapat dibaca: $ENV_FILE"
+
+    chmod 600 "$ENV_FILE" ||
+      fail "Tidak dapat mengamankan file konfigurasi: $ENV_FILE"
+
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE" || source_status=$?
+    set +a
+
+    (( source_status == 0 )) ||
+      fail "Gagal membaca file konfigurasi: $ENV_FILE"
+  fi
+
+  # Read a suggested domain from the tracked example file.
+  if [[ -z "${OPEN_WEBUI_DOMAIN:-}" && -f ".secrets/.env.example" ]]; then
     domain_default="$(
-      sed -n 's/^OPEN_WEBUI_DOMAIN=//p' "$example_file" |
+      sed -n 's/^OPEN_WEBUI_DOMAIN=//p' ".secrets/.env.example" |
         head -n 1 | tr -d '\r' | sed -E "s/^[\"']//; s/[\"']$//"
     )"
     [[ "$domain_default" == *"example.com"* ]] && domain_default=""
     [[ "$domain_default" == *"example.net"* ]] && domain_default=""
   fi
 
-  # Treat obvious placeholders as missing values.
+  # Treat obvious token placeholders as missing.
   if [[ "${CLOUDFLARE_API_TOKEN:-}" == *"isi_token"* ||
         "${CLOUDFLARE_API_TOKEN:-}" == *"your_token"* ||
         "${CLOUDFLARE_API_TOKEN:-}" == *"<"* ]]; then
@@ -278,15 +295,13 @@ load_env() {
     OPEN_WEBUI_DOMAIN=""
   fi
 
+  # Prompt only when required values are missing.
   if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ||
         -z "${OPEN_WEBUI_DOMAIN:-}" ]]; then
-    if [[ ! -t 0 ]]; then
+    [[ -t 0 ]] ||
       fail "Konfigurasi belum lengkap. Jalankan ./quick-start.sh dari terminal interaktif untuk mengisi $ENV_FILE."
-    fi
 
     log "Configure required secrets"
-    [[ -f "$ENV_FILE" ]] ||
-      echo "File $ENV_FILE belum ada; kita buat sekarang."
 
     if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
       while [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; do
@@ -305,32 +320,63 @@ load_env() {
         read -r -p "Domain Open WebUI (mis. chat.example.net): " OPEN_WEBUI_DOMAIN
       fi
     fi
-
-    [[ -n "$OPEN_WEBUI_DOMAIN" ]] ||
-      fail "OPEN_WEBUI_DOMAIN tidak boleh kosong."
-
-    [[ "$OPEN_WEBUI_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] ||
-      fail "Format OPEN_WEBUI_DOMAIN tidak valid."
-
-    [[ "$OPEN_WEBUI_DOMAIN" != *"example.com"* &&
-       "$OPEN_WEBUI_DOMAIN" != *"example.net"* ]] ||
-      fail "Ganti domain placeholder dengan domain yang sebenarnya."
-
-    # Write safely with Bash-compatible quoting and atomic replacement.
-    temp_env="$(mktemp "$env_dir/.env.XXXXXX")"
-    chmod 600 "$temp_env"
-    {
-      printf 'CLOUDFLARE_API_TOKEN=%q\n' "$CLOUDFLARE_API_TOKEN"
-      printf 'OPEN_WEBUI_DOMAIN=%q\n' "$OPEN_WEBUI_DOMAIN"
-    } > "$temp_env"
-
-    mv -f -- "$temp_env" "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-    echo "Konfigurasi tersimpan di $ENV_FILE dengan permission 600."
   fi
+
+  # Validate before writing anything.
+  [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] ||
+    fail "CLOUDFLARE_API_TOKEN tidak boleh kosong."
+
+  [[ -n "${OPEN_WEBUI_DOMAIN:-}" ]] ||
+    fail "OPEN_WEBUI_DOMAIN tidak boleh kosong."
 
   [[ "$OPEN_WEBUI_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] ||
     fail "Format OPEN_WEBUI_DOMAIN tidak valid."
+
+  [[ "$OPEN_WEBUI_DOMAIN" != *"example.com"* &&
+     "$OPEN_WEBUI_DOMAIN" != *"example.net"* ]] ||
+    fail "Ganti domain placeholder dengan domain yang sebenarnya."
+
+  # Build a protected temporary file in the same directory.
+  temp_env="$(mktemp "$env_file_dir/.$(basename -- "$ENV_FILE").XXXXXX")" ||
+    fail "Tidak dapat membuat file konfigurasi sementara."
+
+  chmod 600 "$temp_env" || {
+    rm -f -- "$temp_env"
+    fail "Tidak dapat mengamankan file konfigurasi sementara."
+  }
+
+  # Preserve unrelated settings; replace only the required assignments.
+  if [[ -f "$ENV_FILE" ]]; then
+    if ! awk '
+      /^[[:space:]]*(export[[:space:]]+)?CLOUDFLARE_API_TOKEN=/ { next }
+      /^[[:space:]]*(export[[:space:]]+)?OPEN_WEBUI_DOMAIN=/ { next }
+      { print }
+    ' "$ENV_FILE" > "$temp_env"; then
+      rm -f -- "$temp_env"
+      fail "Gagal mempertahankan konfigurasi yang sudah ada."
+    fi
+  fi
+
+  if ! {
+    printf 'CLOUDFLARE_API_TOKEN=%q\n' "$CLOUDFLARE_API_TOKEN"
+    printf 'OPEN_WEBUI_DOMAIN=%q\n' "$OPEN_WEBUI_DOMAIN"
+  } >> "$temp_env"; then
+    rm -f -- "$temp_env"
+    fail "Gagal menulis konfigurasi."
+  fi
+
+  # Do not replace the active file when its content is already identical.
+  if [[ -f "$ENV_FILE" ]] && cmp -s -- "$temp_env" "$ENV_FILE"; then
+    rm -f -- "$temp_env"
+  else
+    if ! mv -f -- "$temp_env" "$ENV_FILE"; then
+      rm -f -- "$temp_env"
+      fail "Gagal menyimpan konfigurasi."
+    fi
+  fi
+
+  chmod 600 "$ENV_FILE" ||
+    fail "Konfigurasi tersimpan, tetapi permission 600 gagal diterapkan."
 
   export CLOUDFLARE_API_TOKEN OPEN_WEBUI_DOMAIN
 }
@@ -382,7 +428,7 @@ ensure_ssh_auth() {
     in_host && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*$/ { exit }
     in_host && /^[[:space:]]*ansible_host:/ {
       sub(/^[^:]*:[[:space:]]*/, "")
-      gsub(/["'\"'\"']/, "")
+      gsub(/[\042\047]/, "")
       print
       exit
     }
@@ -393,7 +439,7 @@ ensure_ssh_auth() {
     in_host && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*$/ { exit }
     in_host && /^[[:space:]]*ansible_user:/ {
       sub(/^[^:]*:[[:space:]]*/, "")
-      gsub(/["'\"'\"']/, "")
+      gsub(/[\042\047]/, "")
       print
       exit
     }
@@ -405,7 +451,7 @@ ensure_ssh_auth() {
   target="${server_user}@${server_host}"
   log "Checking SSH key authentication for $target"
 
-  if output="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$target" true 2>&1)"; then
+  if output="$(ssh "${SSH_HOST_KEY_ARGS[@]}" -o BatchMode=yes -o ConnectTimeout=5 "$target" true 2>&1)"; then
     SSH_AUTH_READY=1
     echo "SSH key authentication: OK"
     return 0
@@ -444,6 +490,35 @@ ensure_ssh_auth() {
   SSH_AUTH_ARGS=(--connection-password-file "$AUTH_PASSWORD_FILE")
   SSH_AUTH_READY=1
   echo "Password bersama disimpan sementara dengan permission 600."
+}
+
+
+configure_ssh_host_key_checking() {
+  local answer
+
+  if [[ ! -t 0 ]]; then
+    export ANSIBLE_HOST_KEY_CHECKING=True
+    return 0
+  fi
+
+  read -r -p "Bypass SSH host-key checking for this run? [y/N]: " answer
+  case "$answer" in
+    y|Y|yes|YES|Yes)
+      export ANSIBLE_HOST_KEY_CHECKING=False
+      SSH_HOST_KEY_ARGS=(
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        -o GlobalKnownHostsFile=/dev/null
+      )
+      export ANSIBLE_SSH_COMMON_ARGS="${SSH_HOST_KEY_ARGS[*]}${ANSIBLE_SSH_COMMON_ARGS:+ ${ANSIBLE_SSH_COMMON_ARGS}}"
+      printf '%s\n' "WARNING: SSH host identity verification is disabled for this run." >&2
+      printf '%s\n' "Use only on a trusted lab network; verify the server fingerprint whenever possible." >&2
+      ;;
+    *)
+      export ANSIBLE_HOST_KEY_CHECKING=True
+      printf '%s\n' "SSH host-key checking remains enabled."
+      ;;
+  esac
 }
 
 ask_become_password() {
@@ -487,6 +562,129 @@ run_ansible() {
     -i "$INVENTORY_FILE" \
     "${SSH_AUTH_ARGS[@]}" \
     --become-password-file "$BECOME_PASSWORD_FILE" "$@"
+}
+
+tailscale_auth_flow() {
+  log "Memeriksa status autentikasi Tailscale"
+
+  local output="" login_url="" elapsed=0 backend_state="" ts_ip=""
+  local status_command="tailscale status --json"
+
+  # Gagal membaca status bukan alasan untuk memulai login baru.
+  if ! output="$(run_ansible ai_servers -b -m command \
+      -a "$status_command" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    fail "Pemeriksaan status Tailscale gagal. Login baru tidak dijalankan."
+  fi
+
+  if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
+    backend_state="Running"
+  elif grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"NeedsLogin"' <<<"$output"; then
+    backend_state="NeedsLogin"
+  else
+    printf '%s\n' "$output" >&2
+    fail "BackendState tidak dikenali. Login baru tidak dijalankan."
+  fi
+
+  if [[ "$backend_state" == "Running" ]]; then
+    if ! ts_ip="$(run_ansible ai_servers -b -m command \
+        -a 'tailscale ip -4' 2>&1)"; then
+      printf '%s\n' "$ts_ip" >&2
+      fail "Tailscale Running, tetapi IPv4 gagal dibaca."
+    fi
+
+    if ! is_valid_tailscale_ipv4 "$ts_ip"; then
+      printf '%s\n' "$ts_ip" >&2
+      fail "IPv4 Tailscale tidak ditemukan atau tidak valid."
+    fi
+
+    echo "Tailscale sudah terhubung; login baru dilewati."
+    return 0
+  fi
+
+  # Jangan memulai login baru secara implisit saat state lokal masih ada.
+  # Periksa di server; jangan pernah membaca atau mencetak isi file state.
+  local state_probe=""
+  if ! state_probe="$(run_ansible ai_servers -b -m shell \
+      -a 'if test -f /var/lib/tailscale/tailscaled.state; then echo TAILSCALE_STATE_EXISTS; else echo TAILSCALE_STATE_ABSENT; fi' 2>&1)"; then
+    printf '%s\\n' "$state_probe" >&2
+    fail "Pemeriksaan file state Tailscale gagal. Login baru tidak dijalankan."
+  fi
+
+  if grep -q 'TAILSCALE_STATE_EXISTS' <<<"$state_probe"; then
+    fail "State Tailscale lama masih ada dan backend NeedsLogin. Login baru diblokir. Backup tersedia; pilih dan jalankan prosedur recovery secara eksplisit."
+  fi
+
+  if ! grep -q 'TAILSCALE_STATE_ABSENT' <<<"$state_probe"; then
+    printf '%s\\n' "$state_probe" >&2
+    fail "Hasil pemeriksaan file state tidak dikenali. Login baru tidak dijalankan."
+  fi
+
+  # Hanya NeedsLogin tanpa file state lama yang boleh memulai login baru.
+  if ! output="$(run_ansible ai_servers -b -m command \
+      -a 'tailscale up' 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    fail "Perintah tailscale up gagal."
+  fi
+
+  login_url="$(grep -Eo \
+    'https://login\.tailscale\.com/[[:alnum:]_/?=&.-]+' \
+    <<<"$output" | head -n1 || true)"
+
+  if [[ -n "$login_url" ]]; then
+    printf '\n%s\n' "Buka URL berikut untuk menyelesaikan autentikasi:"
+    printf '%s\n\n' "$login_url"
+  else
+    printf '%s\n' "$output"
+  fi
+
+  echo "Menunggu autentikasi (maksimum 5 menit)..."
+  while (( elapsed < 300 )); do
+    if ! output="$(run_ansible ai_servers -b -m command \
+        -a "$status_command" 2>&1)"; then
+      printf '%s\n' "$output" >&2
+      fail "Pemeriksaan status gagal saat polling."
+    fi
+
+    if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
+      if ! ts_ip="$(run_ansible ai_servers -b -m command \
+          -a 'tailscale ip -4' 2>&1)"; then
+        printf '%s\n' "$ts_ip" >&2
+        fail "Backend Running, tetapi IPv4 gagal dibaca."
+      fi
+
+      if is_valid_tailscale_ipv4 "$ts_ip"; then
+        echo "Tailscale terhubung dan IPv4 telah terdeteksi."
+        return 0
+      fi
+    elif ! grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"NeedsLogin"' <<<"$output"; then
+      printf '%s\n' "$output" >&2
+      fail "BackendState tidak dikenali saat polling."
+    fi
+
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  printf '%s\n' "$output" >&2
+  fail "Autentikasi Tailscale belum terkonfirmasi setelah 5 menit."
+}
+
+is_valid_tailscale_ipv4() {
+  local ip octet
+  local -a octets
+
+  ip="$(tr -d '[:space:]\r' <<<"${1:-}")"
+  [[ "$ip" =~ ^100\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+
+  IFS='.' read -r -a octets <<<"$ip"
+  [[ ${#octets[@]} -eq 4 ]] || return 1
+
+  for octet in "${octets[@]}"; do
+    (( 10#$octet <= 255 )) || return 1
+  done
+
+  return 0
 }
 
 backup_tailscale() {
@@ -645,6 +843,45 @@ verify_gpu() {
   fi
 }
 
+
+ensure_gpu_ready() {
+  if verify_gpu; then
+    return 0
+  fi
+
+  echo
+  echo "NVIDIA GPU belum siap pada host target."
+  echo "Reboot diperlukan hanya jika driver belum aktif setelah instalasi."
+  echo "Reboot akan memutus layanan pada host target sementara."
+  echo
+
+  local answer=""
+  if [[ ! -t 0 ]]; then
+    echo "ERROR: Tidak ada terminal interaktif untuk meminta persetujuan reboot." >&2
+    echo "Periksa host target, lalu jalankan kembali fase GPU." >&2
+    return 1
+  fi
+
+  read -r -p "Reboot host target sekarang? [y/N] " answer
+  case "$answer" in
+    y|Y|yes|YES|Yes)
+      ;;
+    *)
+      echo "Reboot dibatalkan. Host target tidak direboot." >&2
+      return 1
+      ;;
+  esac
+
+  log "Reboot target untuk mengaktifkan NVIDIA driver"
+  run_ansible ai_servers -b -m ansible.builtin.reboot \
+    -a "reboot_timeout=600" || {
+      echo "ERROR: Reboot atau koneksi ulang host target gagal." >&2
+      return 1
+    }
+
+  verify_gpu
+}
+
 setup_workstation() {
   log "Local workstation setup"
 
@@ -705,6 +942,24 @@ if sys.version_info < (3, 11):
 }
 
 unit_test() {
+  log "Local shell unit tests"
+
+  local test_script=""
+  for test_script in \
+    "$ROOT_DIR/tests/test_load_env.sh" \
+    "$ROOT_DIR/tests/test_dispatcher.sh" \
+    "$ROOT_DIR/tests/test_default_flow.sh" \
+    "$ROOT_DIR/tests/test_gpu_readiness.sh" \
+    "$ROOT_DIR/tests/test_tailscale_state_guard.sh" \
+    "$ROOT_DIR/tests/test_tailscale_login_flow.sh"; do
+    [[ -f "$test_script" ]] ||
+      fail "File tes shell tidak ditemukan: $test_script"
+
+    log "Running shell test: ${test_script##*/}"
+    bash "$test_script" ||
+      fail "Shell test gagal: ${test_script##*/}"
+  done
+
   log "Local Python unit tests"
 
   local python_bin=""
@@ -801,7 +1056,63 @@ validate() {
 }
 
 
+refresh_tool_paths() {
+  ANSIBLE_BIN="$ROOT_DIR/.venv/bin/ansible"
+  ANSIBLE_PLAYBOOK_BIN="$ROOT_DIR/.venv/bin/ansible-playbook"
+  ANSIBLE_GALAXY_BIN="$ROOT_DIR/.venv/bin/ansible-galaxy"
+
+  [[ -x "$ANSIBLE_BIN" ]] ||
+    ANSIBLE_BIN="$(command -v ansible || true)"
+  [[ -x "$ANSIBLE_PLAYBOOK_BIN" ]] ||
+    ANSIBLE_PLAYBOOK_BIN="$(command -v ansible-playbook || true)"
+  [[ -x "$ANSIBLE_GALAXY_BIN" ]] ||
+    ANSIBLE_GALAXY_BIN="$(command -v ansible-galaxy || true)"
+
+  [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
+    fail "ansible tidak ditemukan setelah setup workstation."
+  [[ -n "$ANSIBLE_PLAYBOOK_BIN" && -x "$ANSIBLE_PLAYBOOK_BIN" ]] ||
+    fail "ansible-playbook tidak ditemukan setelah setup workstation."
+  [[ -n "$ANSIBLE_GALAXY_BIN" && -x "$ANSIBLE_GALAXY_BIN" ]] ||
+    fail "ansible-galaxy tidak ditemukan setelah setup workstation."
+}
+
+# Handle help and reject extra arguments before any phase runs.
+if [[ $# -gt 1 ]]; then
+  printf '%s\n' "ERROR: Hanya satu argumen fase yang diperbolehkan." >&2
+  usage
+  exit 2
+fi
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
 phase="${1:-all}"
+
+# No-argument invocation: prepare the local workstation if needed,
+# then run local tests before allowing the existing "all" phase to proceed.
+if [[ $# -eq 0 ]]; then
+  if [[ ! -x "$ROOT_DIR/.venv/bin/python" ||
+        ! -x "$ROOT_DIR/.venv/bin/ansible" ||
+        ! -x "$ROOT_DIR/.venv/bin/ansible-playbook" ||
+        ! -x "$ROOT_DIR/.venv/bin/ansible-galaxy" ]]; then
+    setup_workstation
+  fi
+
+  refresh_tool_paths
+  unit_test
+fi
+
+case "$phase" in
+  setup|workstation|preflight|ansible|test)
+    ;;
+  baseline|gpu|runtime|tailscale|restore-tailscale|services|proxy|backup-webui|fetch-webui-backup|ollama-test|api-test|validate|all)
+    configure_ssh_host_key_checking
+    ;;
+esac
 
 case "$phase" in
   setup)
@@ -835,7 +1146,7 @@ case "$phase" in
     run_playbook bootstrap
     run_playbook security-baseline
     run_playbook gpu
-    verify_gpu
+    ensure_gpu_ready
     echo "GPU verification passed. Continue with ./quick-start.sh runtime"
     ;;
 
@@ -848,8 +1159,8 @@ case "$phase" in
   tailscale)
     preflight
     run_playbook bootstrap
-    backup_tailscale
     run_playbook tailscale-client
+    tailscale_auth_flow
     ;;
 
   restore-tailscale)
@@ -900,10 +1211,9 @@ case "$phase" in
     run_playbook bootstrap
     run_playbook security-baseline
     run_playbook tailscale-client
-    run_playbook tailscale-state-restore
 
     run_playbook gpu
-    verify_gpu
+    ensure_gpu_ready
 
     run_playbook container-runtime
     run_playbook ai-services

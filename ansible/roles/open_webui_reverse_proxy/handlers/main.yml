@@ -1,14 +1,14 @@
 ---
-- name: Test Nginx configuration before reload
+- name: Test Nginx configuration before restart
   ansible.builtin.command:
     argv:
       - nginx
       - -t
   changed_when: false
-  listen: Reload Nginx
+  listen: Restart Nginx
 
-- name: Reload Nginx after configuration changes
+- name: Restart Nginx after configuration changes
   ansible.builtin.systemd_service:
     name: nginx
-    state: reloaded
-  listen: Reload Nginx
+    state: restarted
+  listen: Restart Nginx

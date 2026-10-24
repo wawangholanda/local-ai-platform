@@ -1,4 +1,40 @@
 ---
+- name: Validate supported operating system
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution in ['Debian', 'Ubuntu']
+      - ansible_os_family == 'Debian'
+    fail_msg: >-
+      The Tailscale client role supports Debian and Ubuntu only.
+      Detected {{ ansible_distribution }} {{ ansible_distribution_version }}.
+
+- name: Detect target APT architecture
+  ansible.builtin.command:
+    argv:
+      - dpkg
+      - --print-architecture
+  register: tailscale_package_architecture
+  changed_when: false
+
+- name: Validate target package architecture
+  ansible.builtin.assert:
+    that:
+      - tailscale_package_architecture.rc == 0
+      - tailscale_package_architecture.stdout | trim | length > 0
+    fail_msg: Could not detect the target's native APT architecture.
+
+- name: Select the matching Tailscale repository
+  ansible.builtin.set_fact:
+    tailscale_repository_distribution: "{{ ansible_distribution | lower }}"
+
+- name: Report selected Tailscale package source
+  ansible.builtin.debug:
+    msg: >-
+      OS={{ ansible_distribution }},
+      release={{ ansible_distribution_release }},
+      architecture={{ tailscale_package_architecture.stdout | trim }},
+      repository={{ tailscale_repository_distribution }}/{{ ansible_distribution_release | lower }}
+
 - name: Ensure APT keyring directory exists
   ansible.builtin.file:
     path: /usr/share/keyrings
@@ -9,7 +45,7 @@
 
 - name: Download Tailscale repository signing key
   ansible.builtin.get_url:
-    url: "https://pkgs.tailscale.com/{{ tailscale_repository_track }}/debian/{{ tailscale_distribution }}.noarmor.gpg"
+    url: "https://pkgs.tailscale.com/{{ tailscale_repository_track }}/{{ tailscale_repository_distribution }}/{{ ansible_distribution_release | lower }}.noarmor.gpg"
     dest: "{{ tailscale_keyring_path }}"
     owner: root
     group: root
@@ -18,7 +54,7 @@
 
 - name: Configure Tailscale APT repository
   ansible.builtin.get_url:
-    url: "https://pkgs.tailscale.com/{{ tailscale_repository_track }}/debian/{{ tailscale_distribution }}.tailscale-keyring.list"
+    url: "https://pkgs.tailscale.com/{{ tailscale_repository_track }}/{{ tailscale_repository_distribution }}/{{ ansible_distribution_release | lower }}.tailscale-keyring.list"
     dest: "{{ tailscale_repository_file }}"
     owner: root
     group: root
@@ -37,9 +73,10 @@
     name: "{{ tailscale_package_name }}"
     state: "{{ tailscale_package_state }}"
     update_cache: false
+    policy_rc_d: 101
 
-- name: Ensure tailscaled service is enabled and running
+- name: Ensure tailscaled service has the requested state
   ansible.builtin.service:
     name: "{{ tailscale_service_name }}"
-    state: started
+    state: "{{ tailscale_service_state }}"
     enabled: true

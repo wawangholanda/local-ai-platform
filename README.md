@@ -1,6 +1,6 @@
 # Local AI Platform
 
-Ansible-managed private AI server running Ollama and Open WebUI on Debian 12, with NVIDIA GPU acceleration and HTTPS access restricted to the Tailscale network.
+Ansible-managed private AI server running Ollama and Open WebUI on Debian or Ubuntu, with NVIDIA GPU acceleration and HTTPS access restricted to the Tailscale network.
 
 The repository is the source of truth for host configuration, container deployment, and the Nginx reverse proxy. Secrets, application backups, and Tailscale state are kept outside Git.
 
@@ -97,7 +97,7 @@ On the Ansible controller/workstation:
 - A Cloudflare API token restricted to the domain's zone, with `Zone: Read`, `DNS: Read`, and `DNS: Edit` permissions.
 - A hostname within a Cloudflare-managed zone.
 
-The target is expected to be Debian 12 (Bookworm), x86-64, with an NVIDIA GPU supported by the configured driver branch. The current inventory points to `192.168.1.4` and uses the SSH account `novan`.
+The target OS must be Debian or Ubuntu on a supported architecture. The target address and SSH account are configured in the local inventory; do not assume example IP addresses or usernames match your environment.
 
 ## Configure secrets
 
@@ -163,7 +163,7 @@ For a new host, use phases so that driver reboots, Tailscale enrollment, and ser
    ./quick-start.sh ansible
    ```
 
-3. Bootstrap Python if needed, reconcile Debian APT sources, install baseline tools, and apply the SSH baseline:
+3. Bootstrap Python if needed, update the APT cache without replacing existing repository configuration, install baseline tools, and apply the SSH baseline:
 
    ```bash
    ./quick-start.sh baseline
@@ -230,7 +230,7 @@ A brand-new Tailscale node may require manual enrollment, and a newly installed 
 | `./quick-start.sh test` | Run local unit tests |
 | `./quick-start.sh preflight` | Check repository prerequisites and required configuration |
 | `./quick-start.sh ansible` | Install collections and syntax-check playbooks |
-| `./quick-start.sh baseline` | Bootstrap Python and apply Debian/security baseline |
+| `./quick-start.sh baseline` | Bootstrap Python and apply Debian/Ubuntu security baseline |
 | `./quick-start.sh tailscale` | Back up existing Tailscale state and ensure the client package/service |
 | `./quick-start.sh gpu` | Apply NVIDIA GPU configuration and verify `nvidia-smi` |
 | `./quick-start.sh runtime` | Configure Docker and NVIDIA Container Toolkit after GPU readiness |

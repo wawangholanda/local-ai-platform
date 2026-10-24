@@ -1,13 +1,45 @@
 ---
-- name: Deploy Debian apt sources
-  ansible.builtin.template:
-    src: sources.list.j2
-    dest: /etc/apt/sources.list
-    owner: root
-    group: root
-    mode: "0644"
+- name: Validate supported operating system for APT baseline
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] | int == 12
+    fail_msg: >-
+      This repository-component task supports Debian 12 only.
+      No repository changes should be made on other operating systems.
 
-- name: Update apt cache
+- name: Read traditional Debian APT sources
+  ansible.builtin.slurp:
+    src: /etc/apt/sources.list
+  register: apt_sources_content
+
+- name: Validate expected official Debian repositories
+  ansible.builtin.assert:
+    that:
+      - "'deb http://deb.debian.org/debian/' in (apt_sources_content.content | b64decode)"
+      - "'security.debian.org/debian-security' in (apt_sources_content.content | b64decode)"
+    fail_msg: >-
+      Expected Debian 12 repository entries were not found.
+      No repository changes should be made.
+
+- name: Add contrib to official Debian repository entries when missing
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: '^(?!\s*#)(?!.*(?:^|\s)contrib(?:\s|$))(deb(?:-src)?\s+https?://(?:deb\.debian\.org/debian/?|security\.debian\.org/debian-security)\s+\S+.*)$'
+    replace: '\1 contrib'
+    backup: true
+  register: apt_contrib
+
+- name: Add non-free to official Debian repository entries when missing
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: '^(?!\s*#)(?!.*(?:^|\s)non-free(?:\s|$))(deb(?:-src)?\s+https?://(?:deb\.debian\.org/debian/?|security\.debian\.org/debian-security)\s+\S+.*)$'
+    replace: '\1 non-free'
+    backup: true
+  register: apt_non_free
+
+- name: Update APT cache after repository changes
   ansible.builtin.apt:
     update_cache: true
-    cache_valid_time: 3600
+    cache_valid_time: 0
+  when: apt_contrib.changed or apt_non_free.changed

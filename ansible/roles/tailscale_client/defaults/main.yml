@@ -1,5 +1,5 @@
 ---
-tailscale_distribution: bookworm
+# Repository distribution and codename are detected from target facts.
 tailscale_repository_track: stable
 
 tailscale_keyring_path: /usr/share/keyrings/tailscale-archive-keyring.gpg
@@ -8,3 +8,4 @@ tailscale_repository_file: /etc/apt/sources.list.d/tailscale.list
 tailscale_package_name: tailscale
 tailscale_package_state: present
 tailscale_service_name: tailscaled
+tailscale_service_state: started

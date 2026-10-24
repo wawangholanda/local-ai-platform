@@ -1,9 +1,310 @@
 ---
-- name: Manage Tailscale client on AI servers
+- name: Detect and reconcile the Tailscale client
   hosts: ai_servers
   become: true
   become_method: sudo
   gather_facts: true
 
-  roles:
-    - tailscale_client
+  vars:
+    tailscale_state_source: /var/lib/tailscale/tailscaled.state
+    tailscale_backup_directory: >-
+      {{ playbook_dir }}/../../.secrets/tailscale/{{ inventory_hostname }}
+    tailscale_backup_destination: >-
+      {{ tailscale_backup_directory }}/tailscaled.state
+
+  tasks:
+    - name: Validate supported operating system
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution in ['Debian', 'Ubuntu']
+          - ansible_os_family == 'Debian'
+          - ansible_distribution_release | length > 0
+        fail_msg: >-
+          Only Debian and Ubuntu are supported. Detected
+          {{ ansible_distribution }} {{ ansible_distribution_release }}.
+
+    - name: Detect the target native APT architecture
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --print-architecture
+      register: tailscale_package_architecture
+      changed_when: false
+
+    - name: Validate the detected architecture
+      ansible.builtin.assert:
+        that:
+          - tailscale_package_architecture.rc == 0
+          - tailscale_package_architecture.stdout | trim | length > 0
+        fail_msg: Could not detect the target native APT architecture.
+
+    - name: Inspect the existing local state backup
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}"
+      delegate_to: localhost
+      become: false
+      register: tailscale_local_backup_stat
+      no_log: true
+
+    - name: Reject an existing invalid local Tailscale backup
+      ansible.builtin.assert:
+        that:
+          - tailscale_local_backup_stat.stat.isreg | default(false)
+          - tailscale_local_backup_stat.stat.size | default(0) | int > 2
+        fail_msg: >-
+          A Tailscale backup exists but is not a regular, non-empty state file.
+          No backup was overwritten and no fresh identity will be created.
+      when: tailscale_local_backup_stat.stat.exists | default(false) | bool
+      no_log: true
+
+    - name: Inspect the target Tailscale executable
+      ansible.builtin.stat:
+        path: /usr/bin/tailscale
+      register: tailscale_binary_stat
+      no_log: true
+
+    - name: Inspect the target Tailscale state file
+      ansible.builtin.stat:
+        path: "{{ tailscale_state_source }}"
+      register: tailscale_server_state_stat
+      no_log: true
+
+    - name: Detect whether tailscaled is active
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - tailscaled
+      register: tailscale_service_probe
+      changed_when: false
+      failed_when: false
+      when: tailscale_binary_stat.stat.exists
+
+    - name: Detect the current Tailscale IPv4 address
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - ip
+          - -4
+      register: tailscale_ip_probe
+      changed_when: false
+      failed_when: false
+      when:
+        - tailscale_binary_stat.stat.exists
+        - tailscale_service_probe.stdout | default('') | trim == 'active'
+
+    - name: Query Tailscale backend status
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - status
+          - --json
+      register: tailscale_backend_status_probe
+      changed_when: false
+      failed_when: false
+      when:
+        - tailscale_binary_stat.stat.exists
+        - tailscale_service_probe.stdout | default('') | trim == 'active'
+
+    - name: Decide whether the existing Tailscale identity is reusable
+      ansible.builtin.set_fact:
+        tailscale_current_ip: "{{ tailscale_ip_probe.stdout | default('') | trim }}"
+        tailscale_backend_state: >-
+          {{
+            'Running'
+            if (
+              (tailscale_backend_status_probe.stdout | default(''))
+              is search('"BackendState"\s*:\s*"Running"')
+            )
+            else 'Unknown'
+          }}
+        tailscale_client_connected: >-
+          {{
+            tailscale_binary_stat.stat.exists
+            and (tailscale_service_probe.stdout | default('') | trim == 'active')
+            and ((tailscale_ip_probe.rc | default(1) | int) == 0)
+            and (
+              tailscale_ip_probe.stdout | default('') | trim
+              is match('^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$')
+            )
+            and (
+              (tailscale_backend_status_probe.rc | default(1) | int) == 0
+            )
+            and (
+              (tailscale_backend_status_probe.stdout | default(''))
+              is search('"BackendState"\s*:\s*"Running"')
+            )
+          }}
+      no_log: true
+
+    - name: Decide which Tailscale path to use
+      ansible.builtin.set_fact:
+        tailscale_skip_install: "{{ tailscale_client_connected | bool }}"
+        tailscale_backup_existing_state: >-
+          {{
+            (tailscale_client_connected | bool)
+            and not (tailscale_local_backup_stat.stat.exists | default(false) | bool)
+          }}
+        tailscale_needs_fresh_login: >-
+          {{
+            not (tailscale_client_connected | bool)
+            and not (tailscale_local_backup_stat.stat.exists | default(false) | bool)
+            and not (tailscale_server_state_stat.stat.exists | default(false) | bool)
+          }}
+
+    - name: Refuse fresh login when an unconnected Tailscale state exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            (tailscale_client_connected | bool)
+            or not (tailscale_server_state_stat.stat.exists | default(false) | bool)
+            or (tailscale_local_backup_stat.stat.exists | default(false) | bool)
+        fail_msg: >-
+          A Tailscale state file exists on the target, but the client is not
+          healthy and no local backup exists. Automatic fresh login is refused.
+          Inspect the target state before proceeding.
+
+    - name: Report the Tailscale decision
+      ansible.builtin.debug:
+        msg:
+          - "Detected OS: {{ ansible_distribution }} {{ ansible_distribution_release }}"
+          - "Detected APT architecture: {{ tailscale_package_architecture.stdout | trim }}"
+          - "Tailscale connected: {{ tailscale_client_connected }}"
+          - "Tailscale backend state: {{ tailscale_backend_state }}"
+          - "Current Tailscale IPv4: {{ tailscale_current_ip | default('none') }}"
+          - "Local state backup exists: {{ tailscale_local_backup_stat.stat.exists | default(false) }}"
+          - "Skip client installation: {{ tailscale_skip_install }}"
+
+    - name: Refuse implicit recovery when a local Tailscale backup exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            not (
+              (tailscale_local_backup_stat.stat.exists | default(false) | bool)
+              and not (tailscale_client_connected | bool)
+            )
+        fail_msg: >-
+          A local Tailscale backup exists, but the target client is not
+          connected. No backup was restored automatically. Inspect the target
+          and run quick-start.sh restore-tailscale explicitly if you intend
+          to restore the saved Tailscale identity.
+
+    - name: Require a usable server state before backing it up
+      ansible.builtin.assert:
+        that:
+          - tailscale_server_state_stat.stat.exists
+          - tailscale_server_state_stat.stat.isreg
+          - tailscale_server_state_stat.stat.size > 2
+        fail_msg: >-
+          Tailscale reports a healthy connection, but its state file is
+          missing or invalid. The existing local backup has not been replaced.
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Create a private local backup directory
+      ansible.builtin.file:
+        path: "{{ tailscale_backup_directory }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: tailscale_backup_existing_state | bool
+
+    - name: Inspect any existing client backup staging file
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}.new"
+      delegate_to: localhost
+      become: false
+      register: tailscale_client_staging_stat
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Refuse to overwrite existing client staging data
+      ansible.builtin.assert:
+        that:
+          - not (tailscale_client_staging_stat.stat.exists | default(false) | bool)
+        fail_msg: >-
+          A Tailscale staging file already exists. It was preserved.
+          Inspect it manually before retrying.
+      when: tailscale_backup_existing_state | bool
+
+    - name: Fetch state to a staging backup without displaying it
+      ansible.builtin.fetch:
+        src: "{{ tailscale_state_source }}"
+        dest: "{{ tailscale_backup_destination }}.new"
+        flat: true
+        validate_checksum: true
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Inspect the staged local backup
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}.new"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: tailscale_staged_backup_stat
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Validate the staged local backup
+      ansible.builtin.assert:
+        that:
+          - tailscale_staged_backup_stat.stat.exists
+          - tailscale_staged_backup_stat.stat.isreg
+          - tailscale_staged_backup_stat.stat.size > 2
+        fail_msg: >-
+          The staged Tailscale backup is invalid. The previous backup
+          will be retained.
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Restrict staged backup permissions
+      ansible.builtin.file:
+        path: "{{ tailscale_backup_destination }}.new"
+        state: file
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      when: tailscale_backup_existing_state | bool
+
+    - name: Publish the backup without replacing an existing file
+      ansible.builtin.copy:
+        src: "{{ tailscale_backup_destination }}.new"
+        dest: "{{ tailscale_backup_destination }}"
+        remote_src: false
+        force: false
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Inspect the published client backup
+      ansible.builtin.stat:
+        path: "{{ tailscale_backup_destination }}"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: tailscale_published_backup_stat
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Verify published client backup matches its staging file
+      ansible.builtin.assert:
+        that:
+          - tailscale_published_backup_stat.stat.isreg
+          - tailscale_published_backup_stat.stat.size > 2
+          - >-
+            tailscale_published_backup_stat.stat.checksum ==
+            tailscale_staged_backup_stat.stat.checksum
+        fail_msg: >-
+          Published backup does not match the staged file. Both files
+          have been preserved for manual inspection.
+      when: tailscale_backup_existing_state | bool
+      no_log: true
+
+    - name: Install or prepare Tailscale when required
+      ansible.builtin.include_role:
+        name: tailscale_client
+      when: not (tailscale_skip_install | bool)

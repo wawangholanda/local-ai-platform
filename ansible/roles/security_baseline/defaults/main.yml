@@ -1,4 +1,7 @@
 ---
+# Administrative account used by baseline and Docker roles.
+local_ai_admin_user: "{{ ansible_user | default('novan') }}"
+
 # SSH security policy
 security_ssh_permit_root_login: "no"
 security_ssh_password_authentication: "yes"

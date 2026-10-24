@@ -1,0 +1,3 @@
+---
+# Administrative account granted access to Docker.
+local_ai_admin_user: "{{ ansible_user | default('novan') }}"

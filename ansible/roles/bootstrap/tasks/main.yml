@@ -1,10 +1,31 @@
 ---
 - name: Install Python 3 for Ansible module support
   ansible.builtin.raw: |
+    set -eu
+
+    if [ ! -r /etc/os-release ]; then
+      echo "Cannot identify target OS: /etc/os-release is missing." >&2
+      exit 1
+    fi
+
+    . /etc/os-release
+    case "${ID:-}" in
+      debian|ubuntu) ;;
+      *)
+        echo "Unsupported OS ID: ${ID:-unknown}. Only Debian and Ubuntu are supported." >&2
+        exit 1
+        ;;
+    esac
+
     if command -v python3 >/dev/null 2>&1; then
       echo "Python 3 is already installed."
     else
-      apt-get update && apt-get install -y python3
+      if ! command -v apt-get >/dev/null 2>&1; then
+        echo "apt-get is unavailable on this target." >&2
+        exit 1
+      fi
+      apt-get update
+      apt-get install -y python3
     fi
   changed_when: "'Python 3 is already installed.' not in raw_result.stdout"
   register: raw_result

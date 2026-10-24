@@ -3,11 +3,11 @@
   hosts: ai_servers
   become: true
   become_method: sudo
-  gather_facts: false
+  gather_facts: true
 
   vars:
     tailscale_state_source: >-
-      {{ playbook_dir }}/../../.secrets/tailscale/debian12ai/tailscaled.state
+      {{ playbook_dir }}/../../.secrets/tailscale/{{ inventory_hostname }}/tailscaled.state
     tailscale_state_destination: /var/lib/tailscale/tailscaled.state
 
   tasks:
@@ -28,6 +28,13 @@
           - tailscale_backup_stat.stat.size > 2
         fail_msg: >-
           Tailscale backup is missing or invalid. No state was changed.
+      no_log: true
+
+    - name: Install Tailscale while keeping its service stopped for restore
+      ansible.builtin.include_role:
+        name: tailscale_client
+      vars:
+        tailscale_service_state: stopped
 
     - name: Inspect the current remote state
       ansible.builtin.stat:
@@ -64,3 +71,56 @@
         name: tailscaled
         state: started
         enabled: true
+
+    - name: Wait for the restored Tailscale backend to become Running
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - status
+          - --json
+      register: tailscale_restore_status
+      changed_when: false
+      failed_when: false
+      retries: 12
+      delay: 5
+      until: >-
+        tailscale_restore_status.rc == 0 and
+        (
+          (tailscale_restore_status.stdout | default(''))
+          is search('"BackendState"\s*:\s*"Running"')
+        )
+      no_log: true
+
+    - name: Verify restored Tailscale IPv4 address
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - ip
+          - -4
+      register: tailscale_restore_ipv4
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Require a healthy restored Tailscale connection
+      ansible.builtin.assert:
+        that:
+          - tailscale_restore_status.rc == 0
+          - >-
+            (tailscale_restore_status.stdout | default(''))
+            is search('"BackendState"\s*:\s*"Running"')
+          - tailscale_restore_ipv4.rc == 0
+          - >-
+            tailscale_restore_ipv4.stdout | trim
+            is match('^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$')
+        fail_msg: >-
+          Tailscale did not become healthy after restoring its saved state.
+          The local backup was preserved. Inspect Tailscale service and
+          authorization before attempting a fresh login.
+      no_log: true
+
+    - name: Report successful Tailscale state restoration
+      ansible.builtin.debug:
+        msg: >-
+          Tailscale backend is Running and an IPv4 address was returned.
+          The restored identity passed the initial connection checks.

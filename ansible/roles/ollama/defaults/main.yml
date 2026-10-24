@@ -10,6 +10,7 @@ ollama_container_name: ollama
 ollama_models:
   - "qwen3.5:2b-q4_K_M"
   - "qwen3.5:4b-q4_K_M"
+  - "qwen2.5-coder:3b"
 
 ollama_context_length: 4096
 ollama_no_cloud: true

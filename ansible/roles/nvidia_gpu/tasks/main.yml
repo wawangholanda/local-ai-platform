@@ -1,9 +1,36 @@
 ---
-- name: Install NVIDIA driver dependencies
-  ansible.builtin.apt:
-    name:
-      - linux-headers-amd64
+- name: Select NVIDIA driver packages
+  ansible.builtin.set_fact:
+    nvidia_driver_packages: >-
+      {{
+        ['linux-headers-amd64', 'nvidia-driver']
+        if ansible_distribution == 'Debian'
+        else
+        ['linux-headers-' ~ ansible_kernel, 'nvidia-driver']
+      }}
+
+- name: Check NVIDIA driver package availability
+  ansible.builtin.command:
+    argv:
+      - apt-cache
+      - policy
       - nvidia-driver
+  register: nvidia_driver_policy
+  changed_when: false
+
+- name: Require an available NVIDIA driver candidate
+  ansible.builtin.assert:
+    that:
+      - "'Candidate: (none)' not in nvidia_driver_policy.stdout"
+      - "'Candidate:' in nvidia_driver_policy.stdout"
+    fail_msg: >-
+      No NVIDIA driver candidate is available for
+      {{ ansible_distribution }} {{ ansible_distribution_version }}.
+      Check the OS repository components and APT cache before retrying.
+
+- name: Install NVIDIA driver and kernel headers
+  ansible.builtin.apt:
+    name: "{{ nvidia_driver_packages }}"
     state: present
     update_cache: false
 

@@ -1,7 +1,7 @@
 ---
 - name: Ensure administrative user exists
   ansible.builtin.user:
-    name: novan
+    name: "{{ local_ai_admin_user }}"
     groups: sudo
     append: true
     shell: /bin/bash

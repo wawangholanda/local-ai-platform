@@ -1,4 +1,25 @@
 ---
+- name: Validate supported OS, release, and architecture for Docker
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          ansible_distribution == 'Debian'
+          and ansible_distribution_release in ['bookworm', 'trixie']
+          and ansible_architecture in ['x86_64', 'aarch64', 'armv7l', 'ppc64le']
+        )
+        or
+        (
+          ansible_distribution == 'Ubuntu'
+          and ansible_distribution_release in ['jammy', 'noble', 'resolute', 'stonking']
+          and ansible_architecture in ['x86_64', 'aarch64', 'armv7l', 'ppc64le', 's390x']
+        )
+    fail_msg: >-
+      Docker role supports only documented Debian/Ubuntu releases and
+      architectures. Detected {{ ansible_distribution }}
+      {{ ansible_distribution_version }} ({{ ansible_distribution_release }})
+      with architecture {{ ansible_architecture }}.
+
 - name: Install Docker dependencies
   ansible.builtin.apt:
     name:
@@ -16,7 +37,7 @@
 
 - name: Add Docker GPG key
   ansible.builtin.get_url:
-    url: https://download.docker.com/linux/debian/gpg
+    url: "https://download.docker.com/linux/{{ 'debian' if ansible_distribution == 'Debian' else 'ubuntu' }}/gpg"
     dest: /etc/apt/keyrings/docker.asc
     mode: "0644"
 
@@ -25,13 +46,13 @@
     name: docker
     types: deb
     uris:
-      - https://download.docker.com/linux/debian
+      - "https://download.docker.com/linux/{{ 'debian' if ansible_distribution == 'Debian' else 'ubuntu' }}"
     suites:
-      - bookworm
+      - "{{ ansible_distribution_release }}"
     components:
       - stable
     architectures:
-      - amd64
+      - "{{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armhf', 'ppc64le': 'ppc64el', 's390x': 's390x'}.get(ansible_architecture, ansible_architecture) }}"
     signed_by: /etc/apt/keyrings/docker.asc
     state: present
 
@@ -52,8 +73,8 @@
     state: started
     enabled: true
 
-- name: Add novan user to docker group
+- name: Add administrative user to docker group
   ansible.builtin.user:
-    name: novan
+    name: "{{ local_ai_admin_user }}"
     groups: docker
     append: true
