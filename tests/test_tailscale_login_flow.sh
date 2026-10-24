@@ -14,20 +14,20 @@ pass() {
   printf 'PASS: %s\n' "$1"
 }
 
-# Pemeriksaan statis: autentikasi interaktif hanya boleh dijalankan Bash.
+# Static check: interactive authentication must only be handled by Bash.
 if grep -Eq 'tailscale[[:space:]]+up|ansible\.builtin\.pause|Wait for interactive Tailscale authentication' "$PLAYBOOK"; then
-  fail "Playbook masih menjalankan login atau pause interaktif"
+  fail "Playbook still performs login or interactive pauses"
 fi
-pass "Playbook tidak menjalankan tailscale up atau pause interaktif"
+pass "Playbook does not run tailscale up or interactive pauses"
 
 grep -q 'tailscale_auth_flow()' "$QUICK_START" ||
-  fail "Fungsi autentikasi Bash tidak ditemukan"
+  fail "Bash authentication function not found"
 
 grep -q 'restore-tailscale' "$PLAYBOOK" ||
   grep -q 'Refuse implicit recovery when a local Tailscale backup exists' "$PLAYBOOK" ||
-  fail "Guard pemulihan backup tidak ditemukan"
+  fail "Backup recovery guard not found"
 
-# Ekstrak fungsi tanpa menjalankan dispatcher quick-start.sh.
+# Extract the function without running the quick-start.sh dispatcher.
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
@@ -38,7 +38,7 @@ awk '
 ' "$QUICK_START" > "$tmpdir/auth-function.sh"
 
 grep -q '^tailscale_auth_flow()' "$tmpdir/auth-function.sh" ||
-  fail "Gagal mengekstrak fungsi autentikasi"
+  fail "Failed to extract the authentication function"
 
 # Driver menguji fungsi dalam subprocess terisolasi.
 cat > "$tmpdir/driver.sh" <<'DRIVER'
@@ -151,7 +151,7 @@ source "$FUNCTION_FILE"
 tailscale_auth_flow
 DRIVER
 
-# Jalankan fungsi yang diekstrak dengan mock, bukan server sungguhan.
+# Run the extracted function with mocks, not against a real server.
 run_case() {
   local scenario="$1"
   local expected_rc="$2"
@@ -183,40 +183,40 @@ run_case() {
 }
 
 out="$(run_case status-fail 42 0)"
-grep -q 'Pemeriksaan status Tailscale gagal' "$out" ||
-  fail "status-fail tidak menghasilkan pesan aman"
-pass "Kegagalan pemeriksaan status tidak memicu login baru"
+grep -q 'Tailscale status check failed' "$out" ||
+  fail "status-fail did not produce the expected safe message"
+pass "Status-check failure does not trigger a new login"
 
 out="$(run_case unknown-state 42 0)"
-grep -q 'BackendState tidak dikenali' "$out" ||
-  fail "unknown-state tidak ditolak"
-pass "BackendState tidak dikenal ditolak tanpa login baru"
+grep -q 'Unrecognized BackendState' "$out" ||
+  fail "Unknown state was not rejected"
+pass "Unknown BackendState is rejected without a new login"
 
 out="$(run_case running-valid-ip 0 0)"
-grep -q 'login baru dilewati' "$out" ||
-  fail "Running dengan IPv4 valid tidak dikenali"
-pass "Running dengan IPv4 valid melewati login"
+grep -q 'skipping new login' "$out" ||
+  fail "Running with a valid IPv4 address was not recognized"
+pass "Running with a valid IPv4 address skips login"
 
 out="$(run_case running-invalid-ip 42 0)"
-grep -q 'IPv4 Tailscale tidak ditemukan' "$out" ||
-  fail "IPv4 invalid tidak ditolak"
-pass "Alamat yang bukan IPv4 Tailscale valid ditolak"
+grep -q 'Tailscale IPv4 address not found' "$out" ||
+  fail "Invalid IPv4 was not rejected"
+pass "An invalid Tailscale IPv4 address is rejected"
 
 out="$(run_case state-exists 42 0)"
-grep -q 'State Tailscale lama masih ada' "$out" ||
+grep -q 'Existing Tailscale state is present' "$out" ||
   fail "State lama tidak memblokir login baru"
-pass "State lama memblokir tailscale up tanpa mengubah state server"
+pass "Existing state blocks tailscale up without modifying server state"
 
 out="$(run_case login-success 0 1)"
 grep -q 'login.tailscale.com/a/mock' "$out" ||
-  fail "URL autentikasi tidak ditampilkan"
-grep -q 'IPv4 telah terdeteksi' "$out" ||
-  fail "Login sukses tidak terkonfirmasi"
-pass "NeedsLogin memicu satu login dan polling sampai Running"
+  fail "Authentication URL was not displayed"
+grep -q 'IPv4 address has been detected' "$out" ||
+  fail "Successful login was not confirmed"
+pass "NeedsLogin triggers one login and polls until Running"
 
 out="$(run_case login-timeout 42 1)"
-grep -q 'belum terkonfirmasi setelah 5 menit' "$out" ||
-  fail "Timeout autentikasi tidak dilaporkan"
-pass "Login yang tidak selesai berakhir dengan timeout"
+grep -q 'was not confirmed within 5 minutes' "$out" ||
+  fail "Authentication timeout was not reported"
+pass "An incomplete login ends with a timeout"
 
-echo "Semua tes Tailscale login flow lulus."
+echo "All Tailscale login flow tests passed."

@@ -33,11 +33,11 @@ def require(condition, message):
     print(f"PASS: {message}")
 
 require(text.count(decision_name) == 1,
-        "Task keputusan Tailscale hanya muncul sekali")
+        "Tailscale decision task appears only once")
 require(text.count(guard_name) == 1,
-        "Guard state lama hanya muncul sekali")
+        "Existing-state guard appears only once")
 require(text.count(backup_guard_name) == 1,
-        "Guard backup lokal tetap tersedia")
+        "Local-backup guard remains present")
 
 decision_pos = text.index(decision_name)
 guard_pos = text.index(guard_name)
@@ -46,23 +46,23 @@ install_pos = text.index("- name: Install Tailscale client", decision_pos) if \
     "- name: Install Tailscale client" in text[decision_pos:] else -1
 
 require(decision_pos < guard_pos < report_pos,
-        "Guard ditempatkan setelah keputusan dan sebelum pelaporan")
+        "Guard is placed after the decision and before reporting")
 require(
     "not (tailscale_server_state_stat.stat.exists | default(false) | bool)"
     in text,
-    "Fresh login mensyaratkan state lama tidak ditemukan",
+    "Fresh login requires existing state to be absent",
 )
 require(
     "(tailscale_client_connected | bool)\n"
     "            or not (tailscale_server_state_stat.stat.exists | default(false) | bool)\n"
     "            or (tailscale_local_backup_stat.stat.exists | default(false) | bool)"
     in text,
-    "Guard menolak state lama saat klien tidak sehat dan backup lokal tidak ada",
+    "Guard rejects existing state when the client is unhealthy and no local backup exists",
 )
 require(
     "run quick-start.sh restore-tailscale explicitly"
     in text,
-    "Pemulihan backup tetap memerlukan fase eksplisit",
+    "Backup recovery still requires an explicit phase",
 )
 PY
 
@@ -72,4 +72,4 @@ printf '\n%s\n' '=== Syntax check ==='
   --syntax-check \
   "$PLAYBOOK"
 
-printf '\n%s\n' 'Semua pemeriksaan state guard lulus.'
+printf '\n%s\n' 'All state-guard checks passed.'

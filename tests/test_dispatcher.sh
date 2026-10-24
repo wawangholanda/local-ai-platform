@@ -38,25 +38,25 @@ run_case() {
 run_case 0 "Opsi --help" --help ||
   fail "Opsi --help gagal"
 grep -q 'Available phases:' "$TMP_DIR/output.txt" ||
-  fail "Bantuan tidak menampilkan daftar fase"
-pass "--help menampilkan bantuan dengan status sukses"
+  fail "Help does not display the phase list"
+pass "--help displays help and exits successfully"
 
 run_case 0 "Opsi -h" -h ||
   fail "Opsi -h gagal"
 grep -q 'Available phases:' "$TMP_DIR/output.txt" ||
-  fail "Opsi -h tidak menampilkan daftar fase"
-pass "-h menampilkan bantuan dengan status sukses"
+  fail "The -h option does not display the phase list"
+pass "-h displays help and exits successfully"
 
-run_case 1 "Fase tidak dikenal" fase-tidak-valid ||
-  fail "Fase tidak dikenal tidak ditolak"
+run_case 1 "Unknown phase" invalid-phase ||
+  fail "Unknown phase was not rejected"
 grep -q 'Available phases:' "$TMP_DIR/output.txt" ||
-  fail "Fase tidak dikenal tidak menampilkan bantuan"
-pass "Fase tidak dikenal ditolak tanpa provisioning"
+  fail "Unknown phase does not display help"
+pass "Unknown phase is rejected without provisioning"
 
-run_case 2 "Argumen berlebih" test extra ||
-  fail "Argumen berlebih tidak ditolak"
+run_case 2 "Extra arguments" test extra ||
+  fail "Extra arguments were not rejected"
 grep -q 'Hanya satu argumen fase' "$TMP_DIR/output.txt" ||
-  fail "Pesan argumen berlebih tidak ditemukan"
-pass "Argumen berlebih ditolak sebelum fase berjalan"
+  fail "Extra-argument error message was not found"
+pass "Extra arguments are rejected before the phase runs"
 
-printf '\n%s\n' 'Semua tes dispatcher lulus.'
+printf '\n%s\n' 'All dispatcher tests passed.'

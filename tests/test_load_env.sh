@@ -56,22 +56,22 @@ CLOUDFLARE_API_TOKEN=dummy-test-token-123
 OPEN_WEBUI_DOMAIN=chat.example.org
 ENV
 
-load_env >/dev/null 2>&1 || fail "Konfigurasi valid gagal dimuat"
+load_env >/dev/null 2>&1 || fail "Failed to load valid configuration"
 [[ "$(stat -c '%a' "$ENV_FILE")" == "600" ]] ||
   fail "Permission file bukan 600"
-pass "Konfigurasi valid dan permission 600"
+pass "Valid configuration and permissions 600"
 
 # The second run must leave both content and inode unchanged.
 cp -- "$ENV_FILE" "$TMP_DIR/expected.env"
 inode_before="$(stat -c '%i' "$ENV_FILE")"
 
-load_env >/dev/null 2>&1 || fail "Pemanggilan kedua gagal"
+load_env >/dev/null 2>&1 || fail "Second invocation failed"
 
 cmp -s "$TMP_DIR/expected.env" "$ENV_FILE" ||
-  fail "Isi file berubah pada pemanggilan kedua"
+  fail "File contents changed on the second invocation"
 [[ "$(stat -c '%i' "$ENV_FILE")" == "$inode_before" ]] ||
   fail "File diganti meskipun kontennya identik"
-pass "Idempotensi: pemanggilan kedua tidak mengganti file"
+pass "Idempotency: second invocation does not replace the file"
 
 # Invalid domains must fail and leave the original content unchanged.
 for invalid_domain in 'bad..example.org' '-bad.example.org' 'bad_domain.example.org'; do
@@ -84,9 +84,9 @@ for invalid_domain in 'bad..example.org' '-bad.example.org' 'bad_domain.example.
   fi
 
   cmp -s "$TMP_DIR/expected.env" "$ENV_FILE" ||
-    fail "File berubah saat domain invalid ditolak"
+    fail "File changed when the invalid domain was rejected"
 done
-pass "Domain invalid ditolak tanpa mengubah isi konfigurasi"
+pass "Invalid domain is rejected without changing configuration"
 
 # Placeholder domain must be rejected without interactive prompting.
 cat > "$ENV_FILE" <<'ENV'
@@ -100,8 +100,8 @@ if (load_env >/dev/null 2>&1); then
 fi
 
 cmp -s "$TMP_DIR/expected.env" "$ENV_FILE" ||
-  fail "File berubah saat placeholder ditolak"
-pass "Domain placeholder ditolak tanpa mengubah isi konfigurasi"
+  fail "File changed when the placeholder was rejected"
+pass "Placeholder domain is rejected without changing configuration"
 
 # Placeholder token must fail in non-interactive mode.
 cat > "$ENV_FILE" <<'ENV'
@@ -115,7 +115,7 @@ if (load_env >/dev/null 2>&1); then
 fi
 
 cmp -s "$TMP_DIR/expected.env" "$ENV_FILE" ||
-  fail "File berubah saat token placeholder ditolak"
-pass "Token placeholder ditolak tanpa mengubah isi konfigurasi"
+  fail "File changed when the placeholder token was rejected"
+pass "Placeholder token is rejected without changing configuration"
 
-printf '\n%s\n' 'Semua tes load_env() lulus.'
+printf '\n%s\n' 'All load_env() tests passed.'

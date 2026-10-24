@@ -115,7 +115,7 @@ status="$(run_default "$fixture" "$log_file")"
 [[ "$(sed -n '2p' "$log_file")" == test ]] || fail "Tes tidak berjalan setelah setup"
 grep -qx preflight "$log_file" || fail "Fase all tidak berlanjut setelah tes sukses"
 grep -qx validate "$log_file" || fail "Validasi akhir fase all tidak berjalan"
-pass "Tool hilang: setup → tes → all"
+pass "Tools missing: setup → test → all"
 
 # Case 2: tools already available; setup must be skipped.
 fixture="$TMP_DIR/tools-present"
@@ -123,13 +123,13 @@ log_file="$TMP_DIR/present.log"
 make_fixture "$fixture" yes
 status="$(run_default "$fixture" "$log_file")"
 
-[[ "$status" == 0 ]] || fail "Alur default dengan tool tersedia gagal"
-[[ "$(sed -n '1p' "$log_file")" == test ]] || fail "Tes bukan langkah pertama saat tool tersedia"
+[[ "$status" == 0 ]] || fail "Default flow with available tools failed"
+[[ "$(sed -n '1p' "$log_file")" == test ]] || fail "Test is not the first step when tools are available"
 if grep -qx setup "$log_file"; then
-  fail "Setup berjalan padahal semua tool tersedia"
+  fail "Setup ran even though all tools are available"
 fi
 grep -qx preflight "$log_file" || fail "Fase all tidak berjalan"
-pass "Tool tersedia: setup dilewati, tes lalu all"
+pass "Tools available: skip setup, then test and all"
 
 # Case 3: tests fail; all must not begin.
 fixture="$TMP_DIR/test-failure"
@@ -140,9 +140,9 @@ status="$(run_default "$fixture" "$log_file" 0 1)"
 [[ "$status" != 0 ]] || fail "Kegagalan tes tidak menghentikan alur"
 grep -qx test "$log_file" || fail "Tes tidak tercatat"
 if grep -qx preflight "$log_file"; then
-  fail "Provisioning dimulai walaupun tes gagal"
+  fail "Provisioning started even though the tests failed"
 fi
-pass "Tes gagal: alur berhenti sebelum all"
+pass "Test failure: flow stops before all"
 
 # Case 4: setup fails; tests and all must not begin.
 fixture="$TMP_DIR/setup-failure"
@@ -151,8 +151,8 @@ make_fixture "$fixture" no
 status="$(run_default "$fixture" "$log_file" 1 0)"
 
 [[ "$status" != 0 ]] || fail "Kegagalan setup tidak menghentikan alur"
-[[ "$(cat "$log_file")" == setup ]] || fail "Tes atau fase all berjalan setelah setup gagal"
-pass "Setup gagal: alur berhenti sebelum tes dan all"
+[[ "$(cat "$log_file")" == setup ]] || fail "Test or all phase ran after setup failed"
+pass "Setup failure: flow stops before test and all"
 
 # Case 5: explicit test phase must not start setup or all.
 fixture="$TMP_DIR/explicit-test"
@@ -168,6 +168,6 @@ fi
 
 [[ "$status" == 0 ]] || fail "Fase test eksplisit gagal"
 [[ "$(cat "$log_file")" == test ]] || fail "Fase test memanggil setup atau all"
-pass "Fase test eksplisit hanya menjalankan tes"
+pass "Explicit test phase runs tests only"
 
-printf '\n%s\n' 'Semua tes alur default lulus.'
+printf '\n%s\n' 'All default-flow tests passed.'

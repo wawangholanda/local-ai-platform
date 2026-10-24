@@ -73,7 +73,7 @@ run_ansible() {
   printf ' <%s>' "$@" >> "$MOCK_LOG"
   printf '\n' >> "$MOCK_LOG"
 
-  # Semua pemanggilan Ansible dimock; tidak ada koneksi ke host sungguhan.
+  # All Ansible calls are mocked; no connection is made to a real host.
   return "${MOCK_REBOOT_STATUS:-0}"
 }
 
@@ -114,31 +114,31 @@ run_case() {
   printf '%s' "$log_file"
 }
 
-# 1. GPU sudah siap: tidak boleh reboot.
+# 1. GPU is already ready: reboot must not occur.
 log_file="$(run_case gpu-ready ready '' 0)"
 grep -qx 'verify_gpu:1' "$log_file" ||
   fail "GPU siap: pemeriksaan awal tidak tercatat"
 if grep -q '^run_ansible' "$log_file"; then
   fail "GPU siap: Ansible tidak boleh dipanggil untuk reboot"
 fi
-pass "GPU sudah siap: reboot dilewati"
+pass "GPU is already ready: reboot is skipped"
 
-# 2. GPU gagal dan pengguna menolak: tidak boleh reboot.
+# 2. GPU check fails and the user declines: reboot must not occur.
 log_file="$(run_case decline fail n 1)"
 grep -qx 'verify_gpu:1' "$log_file" ||
   fail "Penolakan: pemeriksaan GPU tidak tercatat"
 if grep -q '^run_ansible' "$log_file"; then
   fail "Penolakan: reboot tidak boleh dijalankan"
 fi
-pass "Pengguna menolak: proses berhenti tanpa reboot"
+pass "User declines: process stops without reboot"
 
-# 3. GPU gagal, pengguna setuju, reboot sukses, GPU siap.
+# 3. GPU check fails, user agrees, reboot succeeds, GPU is ready.
 log_file="$(run_case approve fail-then-ready y 0)"
 [[ "$(grep -c '^verify_gpu:' "$log_file")" -eq 2 ]] ||
   fail "Persetujuan: seharusnya ada dua pemeriksaan GPU"
 grep -q '^run_ansible .*ansible.builtin.reboot' "$log_file" ||
   fail "Persetujuan: perintah reboot Ansible tidak tercatat"
-pass "Pengguna setuju: reboot dimock dan GPU diverifikasi ulang"
+pass "User agrees: reboot is mocked and GPU is rechecked"
 
 # 4. Reboot gagal: proses harus berhenti.
 log_file="$(run_case reboot-failure fail y 1 1)"
@@ -146,6 +146,6 @@ grep -q '^run_ansible .*ansible.builtin.reboot' "$log_file" ||
   fail "Reboot gagal: perintah reboot tidak tercatat"
 [[ "$(grep -c '^verify_gpu:' "$log_file")" -eq 1 ]] ||
   fail "Reboot gagal: pemeriksaan GPU tidak boleh dilanjutkan"
-pass "Reboot gagal: proses berhenti tanpa validasi lanjutan"
+pass "Reboot fails: process stops without further validation"
 
-printf '\n%s\n' 'Semua tes GPU readiness lulus.'
+printf '\n%s\n' 'All GPU readiness tests passed.'

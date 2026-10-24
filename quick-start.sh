@@ -86,18 +86,18 @@ ensure_target_inventory() {
   # Create a local inventory from the example only when it does not exist.
   if [[ ! -e "$inventory_file" ]]; then
     [[ -f "$inventory_example" ]] ||
-      fail "Template inventory tidak ditemukan: $inventory_example"
+      fail "Inventory template not found: $inventory_example"
 
     cp -- "$inventory_example" "$inventory_file" ||
-      fail "Gagal membuat inventory dari template."
+      fail "Failed to create inventory from template."
 
     chmod 600 "$inventory_file" ||
-      fail "Gagal mengatur permission inventory."
+      fail "Failed to set inventory permissions."
     log "Created local inventory from $inventory_example"
   fi
 
   [[ -f "$inventory_file" ]] ||
-    fail "Inventory tidak ditemukan atau bukan file biasa: $inventory_file"
+    fail "Inventory not found or is not a regular file: $inventory_file"
 
   # Read the configured target without executing inventory content.
   server_host="$(python -c '
@@ -107,7 +107,7 @@ with open(sys.argv[1], encoding="utf-8") as f:
 host = data["all"]["children"]["ai_servers"]["hosts"]["ai_server"]
 print(host.get("ansible_host", "") or "")
 ' "$inventory_file")" ||
-    fail "Inventory YAML tidak valid atau struktur host ai_server tidak ditemukan."
+    fail "Invalid inventory YAML or ai_server host structure not found."
 
   server_user="$(python -c '
 import sys, yaml
@@ -116,7 +116,7 @@ with open(sys.argv[1], encoding="utf-8") as f:
 host = data["all"]["children"]["ai_servers"]["hosts"]["ai_server"]
 print(host.get("ansible_user", "") or "")
 ' "$inventory_file")" ||
-    fail "Gagal membaca ansible_user dari inventory."
+    fail "Failed to read ansible_user from inventory."
 
   # Prompt until a valid target hostname/IP is supplied.
   while :; do
@@ -126,10 +126,10 @@ print(host.get("ansible_user", "") or "")
     fi
 
     [[ -t 0 ]] ||
-      fail "ansible_host kosong atau tidak valid. Jalankan dari terminal interaktif."
+      fail "ansible_host is empty or invalid. Run from an interactive terminal."
 
     if [[ -n "$server_host" && "$server_host" != "CHANGE_ME" ]]; then
-      printf 'Format IP/hostname tidak valid. Coba lagi.\n' >&2
+      printf 'Invalid IP address/hostname format. Try again.\n' >&2
     fi
     read -r -p "IP address or hostname of the Debian AI server: " server_host
   done
@@ -143,12 +143,12 @@ print(host.get("ansible_user", "") or "")
     fi
 
     [[ -t 0 ]] ||
-      fail "ansible_user kosong atau tidak valid. Jalankan dari terminal interaktif."
+      fail "ansible_user is empty or invalid. Run from an interactive terminal."
 
     if [[ "$server_user" == "root" ]]; then
-      printf 'Login SSH sebagai root tidak diperbolehkan; gunakan akun non-root dengan sudo.\n' >&2
+      printf 'SSH login as root is not allowed; use a non-root account with sudo.\n' >&2
     elif [[ -n "$server_user" && "$server_user" != "CHANGE_ME" ]]; then
-      printf 'Format username SSH tidak valid. Coba lagi.\n' >&2
+      printf 'Invalid SSH username format. Try again.\n' >&2
     fi
     read -r -p "SSH username (use a non-root account with sudo): " server_user
   done
@@ -226,7 +226,7 @@ os.chmod(destination, os.stat(source).st_mode & 0o777)
 PYINVENTORY
   then
     rm -f -- "$temp_file"
-    fail "Gagal memperbarui inventory."
+    fail "Failed to update inventory."
   fi
 
   mv -f -- "$temp_file" "$inventory_file"
@@ -247,22 +247,22 @@ load_env() {
   env_file_dir="$(dirname -- "$ENV_FILE")"
 
   [[ -n "$ENV_FILE" && "$ENV_FILE" != "/" ]] ||
-    fail "Path file konfigurasi tidak valid."
+    fail "Invalid configuration file path."
 
   mkdir -p -- "$env_file_dir" ||
-    fail "Tidak dapat membuat direktori konfigurasi: $env_file_dir"
+    fail "Unable to create configuration directory: $env_file_dir"
 
   if [[ "$ENV_FILE" == ".secrets/.env" ]]; then
     chmod 700 "$env_file_dir" ||
-      fail "Tidak dapat mengamankan direktori konfigurasi."
+      fail "Unable to secure configuration directory."
   fi
 
   if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
     [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" && -r "$ENV_FILE" ]] ||
-      fail "File konfigurasi bukan file biasa atau tidak dapat dibaca: $ENV_FILE"
+      fail "Configuration file is not a regular file or is not readable: $ENV_FILE"
 
     chmod 600 "$ENV_FILE" ||
-      fail "Tidak dapat mengamankan file konfigurasi: $ENV_FILE"
+      fail "Unable to secure configuration file: $ENV_FILE"
 
     set -a
     # shellcheck disable=SC1090
@@ -270,7 +270,7 @@ load_env() {
     set +a
 
     (( source_status == 0 )) ||
-      fail "Gagal membaca file konfigurasi: $ENV_FILE"
+      fail "Failed to read configuration file: $ENV_FILE"
   fi
 
   # Read a suggested domain from the tracked example file.
@@ -299,16 +299,16 @@ load_env() {
   if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ||
         -z "${OPEN_WEBUI_DOMAIN:-}" ]]; then
     [[ -t 0 ]] ||
-      fail "Konfigurasi belum lengkap. Jalankan ./quick-start.sh dari terminal interaktif untuk mengisi $ENV_FILE."
+      fail "Configuration is incomplete. Run ./quick-start.sh from an interactive terminal to populate $ENV_FILE."
 
     log "Configure required secrets"
 
     if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
       while [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; do
-        read -r -s -p "Cloudflare API token (input tersembunyi): " CLOUDFLARE_API_TOKEN
+        read -r -s -p "Cloudflare API token (input hidden): " CLOUDFLARE_API_TOKEN
         printf '\n'
         [[ -n "$CLOUDFLARE_API_TOKEN" ]] ||
-          echo "Token tidak boleh kosong."
+          echo "Token must not be empty."
       done
     fi
 
@@ -317,20 +317,20 @@ load_env() {
         read -r -p "Domain Open WebUI [$domain_default]: " entered_domain
         OPEN_WEBUI_DOMAIN="${entered_domain:-$domain_default}"
       else
-        read -r -p "Domain Open WebUI (mis. chat.example.net): " OPEN_WEBUI_DOMAIN
+        read -r -p "Open WebUI domain (e.g. chat.example.net): " OPEN_WEBUI_DOMAIN
       fi
     fi
   fi
 
   # Validate before writing anything.
   [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] ||
-    fail "CLOUDFLARE_API_TOKEN tidak boleh kosong."
+    fail "CLOUDFLARE_API_TOKEN must not be empty."
 
   [[ -n "${OPEN_WEBUI_DOMAIN:-}" ]] ||
-    fail "OPEN_WEBUI_DOMAIN tidak boleh kosong."
+    fail "OPEN_WEBUI_DOMAIN must not be empty."
 
   [[ "$OPEN_WEBUI_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] ||
-    fail "Format OPEN_WEBUI_DOMAIN tidak valid."
+    fail "Invalid OPEN_WEBUI_DOMAIN format."
 
   [[ "$OPEN_WEBUI_DOMAIN" != *"example.com"* &&
      "$OPEN_WEBUI_DOMAIN" != *"example.net"* ]] ||
@@ -338,11 +338,11 @@ load_env() {
 
   # Build a protected temporary file in the same directory.
   temp_env="$(mktemp "$env_file_dir/.$(basename -- "$ENV_FILE").XXXXXX")" ||
-    fail "Tidak dapat membuat file konfigurasi sementara."
+    fail "Unable to create temporary configuration file."
 
   chmod 600 "$temp_env" || {
     rm -f -- "$temp_env"
-    fail "Tidak dapat mengamankan file konfigurasi sementara."
+    fail "Unable to secure temporary configuration file."
   }
 
   # Preserve unrelated settings; replace only the required assignments.
@@ -353,7 +353,7 @@ load_env() {
       { print }
     ' "$ENV_FILE" > "$temp_env"; then
       rm -f -- "$temp_env"
-      fail "Gagal mempertahankan konfigurasi yang sudah ada."
+      fail "Failed to preserve existing configuration."
     fi
   fi
 
@@ -362,7 +362,7 @@ load_env() {
     printf 'OPEN_WEBUI_DOMAIN=%q\n' "$OPEN_WEBUI_DOMAIN"
   } >> "$temp_env"; then
     rm -f -- "$temp_env"
-    fail "Gagal menulis konfigurasi."
+    fail "Failed to write configuration."
   fi
 
   # Do not replace the active file when its content is already identical.
@@ -371,12 +371,12 @@ load_env() {
   else
     if ! mv -f -- "$temp_env" "$ENV_FILE"; then
       rm -f -- "$temp_env"
-      fail "Gagal menyimpan konfigurasi."
+      fail "Failed to save configuration."
     fi
   fi
 
   chmod 600 "$ENV_FILE" ||
-    fail "Konfigurasi tersimpan, tetapi permission 600 gagal diterapkan."
+    fail "Configuration was saved, but applying permission 600 failed."
 
   export CLOUDFLARE_API_TOKEN OPEN_WEBUI_DOMAIN
 }
@@ -384,15 +384,15 @@ load_env() {
 preflight() {
   log "Preflight"
 
-  [[ -f ansible.cfg ]] || fail "ansible.cfg tidak ditemukan"
-  [[ -d ansible/roles ]] || fail "ansible roles tidak ditemukan"
+  [[ -f ansible.cfg ]] || fail "ansible.cfg not found"
+  [[ -d ansible/roles ]] || fail "Ansible roles not found"
 
   [[ -n "$ANSIBLE_PLAYBOOK_BIN" && -x "$ANSIBLE_PLAYBOOK_BIN" ]] ||
-    fail "ansible-playbook tidak ditemukan"
+    fail "ansible-playbook not found"
   [[ -n "$ANSIBLE_GALAXY_BIN" && -x "$ANSIBLE_GALAXY_BIN" ]] ||
-    fail "ansible-galaxy tidak ditemukan"
+    fail "ansible-galaxy not found"
   [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
-    fail "ansible tidak ditemukan"
+    fail "Ansible not found"
 
   load_env
   ensure_target_inventory
@@ -446,7 +446,7 @@ ensure_ssh_auth() {
   ' "$inventory_file")"
 
   [[ -n "$server_host" && -n "$server_user" ]] ||
-    fail "Tidak dapat membaca ansible_host/ansible_user untuk ai_server."
+    fail "Unable to read ansible_host/ansible_user for ai_server."
 
   target="${server_user}@${server_host}"
   log "Checking SSH key authentication for $target"
@@ -469,15 +469,15 @@ ensure_ssh_auth() {
 
   printf '%s\n' "$output" >&2
   [[ -t 0 ]] || fail "Password fallback requires an interactive terminal."
-  read -r -p "SSH key ditolak. Gunakan password yang sama untuk SSH dan sudo? [y/N] " answer
-  [[ "$answer" =~ ^[Yy]$ ]] || fail "Autentikasi SSH dibatalkan."
+  read -r -p "SSH key was rejected. Use the same password for SSH and sudo? [y/N] " answer
+  [[ "$answer" =~ ^[Yy]$ ]] || fail "SSH authentication cancelled."
 
   command -v sshpass >/dev/null 2>&1 ||
     fail "Fallback password membutuhkan sshpass. Pasang dengan: sudo apt install sshpass"
 
-  read -r -s -p "Password SSH dan sudo untuk $target: " password
+  read -r -s -p "SSH and sudo password for $target: " password
   printf '\n'
-  [[ -n "$password" ]] || fail "Password kosong."
+  [[ -n "$password" ]] || fail "Password must not be empty."
 
   umask 077
   AUTH_PASSWORD_FILE="$(mktemp "$ROOT_DIR/.secrets/.auth-password.XXXXXX")"
@@ -489,7 +489,7 @@ ensure_ssh_auth() {
   BECOME_PASSWORD_FILE="$AUTH_PASSWORD_FILE"
   SSH_AUTH_ARGS=(--connection-password-file "$AUTH_PASSWORD_FILE")
   SSH_AUTH_READY=1
-  echo "Password bersama disimpan sementara dengan permission 600."
+  echo "Shared password stored temporarily with permission 600."
 }
 
 
@@ -529,7 +529,7 @@ ask_become_password() {
   local password
   read -r -s -p "BECOME password (sudo): " password
   printf '\n'
-  [[ -n "$password" ]] || fail "Password sudo kosong."
+  [[ -n "$password" ]] || fail "Sudo password must not be empty."
 
   umask 077
   AUTH_PASSWORD_FILE="$(mktemp "$ROOT_DIR/.secrets/.auth-password.XXXXXX")"
@@ -570,11 +570,11 @@ tailscale_auth_flow() {
   local output="" login_url="" elapsed=0 backend_state="" ts_ip=""
   local status_command="tailscale status --json"
 
-  # Gagal membaca status bukan alasan untuk memulai login baru.
+  # A status-read failure is not a reason to initiate a new login.
   if ! output="$(run_ansible ai_servers -b -m command \
       -a "$status_command" 2>&1)"; then
     printf '%s\n' "$output" >&2
-    fail "Pemeriksaan status Tailscale gagal. Login baru tidak dijalankan."
+    fail "Tailscale status check failed. A new login will not be initiated."
   fi
 
   if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
@@ -583,48 +583,48 @@ tailscale_auth_flow() {
     backend_state="NeedsLogin"
   else
     printf '%s\n' "$output" >&2
-    fail "BackendState tidak dikenali. Login baru tidak dijalankan."
+    fail "Unrecognized BackendState. A new login will not be initiated."
   fi
 
   if [[ "$backend_state" == "Running" ]]; then
     if ! ts_ip="$(run_ansible ai_servers -b -m command \
         -a 'tailscale ip -4' 2>&1)"; then
       printf '%s\n' "$ts_ip" >&2
-      fail "Tailscale Running, tetapi IPv4 gagal dibaca."
+      fail "Tailscale is running, but its IPv4 address could not be read."
     fi
 
     if ! is_valid_tailscale_ipv4 "$ts_ip"; then
       printf '%s\n' "$ts_ip" >&2
-      fail "IPv4 Tailscale tidak ditemukan atau tidak valid."
+      fail "Tailscale IPv4 address not found or invalid."
     fi
 
-    echo "Tailscale sudah terhubung; login baru dilewati."
+    echo "Tailscale is already connected; skipping new login."
     return 0
   fi
 
-  # Jangan memulai login baru secara implisit saat state lokal masih ada.
-  # Periksa di server; jangan pernah membaca atau mencetak isi file state.
+  # Do not implicitly initiate a new login when local state exists.
+  # Check on the server; never read or print the contents of the state file.
   local state_probe=""
   if ! state_probe="$(run_ansible ai_servers -b -m shell \
       -a 'if test -f /var/lib/tailscale/tailscaled.state; then echo TAILSCALE_STATE_EXISTS; else echo TAILSCALE_STATE_ABSENT; fi' 2>&1)"; then
     printf '%s\\n' "$state_probe" >&2
-    fail "Pemeriksaan file state Tailscale gagal. Login baru tidak dijalankan."
+    fail "Tailscale state-file check failed. A new login will not be initiated."
   fi
 
   if grep -q 'TAILSCALE_STATE_EXISTS' <<<"$state_probe"; then
-    fail "State Tailscale lama masih ada dan backend NeedsLogin. Login baru diblokir. Backup tersedia; pilih dan jalankan prosedur recovery secara eksplisit."
+    fail "Existing Tailscale state is present and the backend reports NeedsLogin. New login is blocked. A backup is available; explicitly select and run the recovery procedure."
   fi
 
   if ! grep -q 'TAILSCALE_STATE_ABSENT' <<<"$state_probe"; then
     printf '%s\\n' "$state_probe" >&2
-    fail "Hasil pemeriksaan file state tidak dikenali. Login baru tidak dijalankan."
+    fail "Unrecognized state-file check result. A new login will not be initiated."
   fi
 
   # Hanya NeedsLogin tanpa file state lama yang boleh memulai login baru.
   if ! output="$(run_ansible ai_servers -b -m command \
       -a 'tailscale up' 2>&1)"; then
     printf '%s\n' "$output" >&2
-    fail "Perintah tailscale up gagal."
+    fail "The tailscale up command failed."
   fi
 
   login_url="$(grep -Eo \
@@ -632,34 +632,34 @@ tailscale_auth_flow() {
     <<<"$output" | head -n1 || true)"
 
   if [[ -n "$login_url" ]]; then
-    printf '\n%s\n' "Buka URL berikut untuk menyelesaikan autentikasi:"
+    printf '\n%s\n' "Open the following URL to complete authentication:"
     printf '%s\n\n' "$login_url"
   else
     printf '%s\n' "$output"
   fi
 
-  echo "Menunggu autentikasi (maksimum 5 menit)..."
+  echo "Waiting for authentication (up to 5 minutes)..."
   while (( elapsed < 300 )); do
     if ! output="$(run_ansible ai_servers -b -m command \
         -a "$status_command" 2>&1)"; then
       printf '%s\n' "$output" >&2
-      fail "Pemeriksaan status gagal saat polling."
+      fail "Status check failed during polling."
     fi
 
     if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
       if ! ts_ip="$(run_ansible ai_servers -b -m command \
           -a 'tailscale ip -4' 2>&1)"; then
         printf '%s\n' "$ts_ip" >&2
-        fail "Backend Running, tetapi IPv4 gagal dibaca."
+        fail "Backend is running, but its IPv4 address could not be read."
       fi
 
       if is_valid_tailscale_ipv4 "$ts_ip"; then
-        echo "Tailscale terhubung dan IPv4 telah terdeteksi."
+        echo "Tailscale is connected and an IPv4 address has been detected."
         return 0
       fi
     elif ! grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"NeedsLogin"' <<<"$output"; then
       printf '%s\n' "$output" >&2
-      fail "BackendState tidak dikenali saat polling."
+      fail "Unrecognized BackendState during polling."
     fi
 
     sleep 5
@@ -667,7 +667,7 @@ tailscale_auth_flow() {
   done
 
   printf '%s\n' "$output" >&2
-  fail "Autentikasi Tailscale belum terkonfirmasi setelah 5 menit."
+  fail "Tailscale authentication was not confirmed within 5 minutes."
 }
 
 is_valid_tailscale_ipv4() {
@@ -850,24 +850,24 @@ ensure_gpu_ready() {
   fi
 
   echo
-  echo "NVIDIA GPU belum siap pada host target."
-  echo "Reboot diperlukan hanya jika driver belum aktif setelah instalasi."
+  echo "The NVIDIA GPU is not ready on the target host."
+  echo "A reboot is only required if the driver is not active after installation."
   echo "Reboot akan memutus layanan pada host target sementara."
   echo
 
   local answer=""
   if [[ ! -t 0 ]]; then
-    echo "ERROR: Tidak ada terminal interaktif untuk meminta persetujuan reboot." >&2
-    echo "Periksa host target, lalu jalankan kembali fase GPU." >&2
+    echo "ERROR: No interactive terminal is available to request reboot approval." >&2
+    echo "Check the target host, then rerun the GPU phase." >&2
     return 1
   fi
 
-  read -r -p "Reboot host target sekarang? [y/N] " answer
+  read -r -p "Reboot the target host now? [y/N] " answer
   case "$answer" in
     y|Y|yes|YES|Yes)
       ;;
     *)
-      echo "Reboot dibatalkan. Host target tidak direboot." >&2
+      echo "Reboot cancelled. The target host was not rebooted." >&2
       return 1
       ;;
   esac
@@ -875,7 +875,7 @@ ensure_gpu_ready() {
   log "Reboot target untuk mengaktifkan NVIDIA driver"
   run_ansible ai_servers -b -m ansible.builtin.reboot \
     -a "reboot_timeout=600" || {
-      echo "ERROR: Reboot atau koneksi ulang host target gagal." >&2
+      echo "ERROR: Reboot or reconnection to the target host failed." >&2
       return 1
     }
 
@@ -892,7 +892,7 @@ setup_workstation() {
   os_name="$(uname -s)"
   case "$os_name" in
     Linux|Darwin) ;;
-    *) fail "OS tidak didukung: $os_name (dukungan: Linux dan macOS)." ;;
+    *) fail "Unsupported OS: $os_name (supported: Linux and macOS)." ;;
   esac
 
   if command -v python3 >/dev/null 2>&1; then
@@ -900,7 +900,7 @@ setup_workstation() {
   elif command -v python >/dev/null 2>&1; then
     python_bin="$(command -v python)"
   else
-    fail "Python 3 tidak ditemukan. Instal Python 3.11+ lalu jalankan setup kembali."
+    fail "Python 3 not found. Install Python 3.11+, then rerun setup."
   fi
 
   python_version="$("$python_bin" -c '
@@ -912,32 +912,32 @@ print(f"{sys.version_info.major}.{sys.version_info.minor}")
 import sys
 if sys.version_info < (3, 11):
     raise SystemExit("Python 3.11 atau lebih baru diperlukan.")
-' || fail "Python $python_version tidak didukung; diperlukan Python 3.11+."
+' || fail "Python $python_version is not supported; Python 3.11+ is required."
 
   if [[ -e "$ROOT_DIR/.venv" ]]; then
     [[ -x "$ROOT_DIR/.venv/bin/python" ]] ||
-      fail ".venv sudah ada tetapi bukan virtual environment Unix yang valid. Periksa secara manual; tidak dihapus."
+      fail ".venv already exists but is not a valid Unix virtual environment. Inspect it manually; it will not be deleted."
   else
     "$python_bin" -m venv "$ROOT_DIR/.venv" ||
-      fail "Gagal membuat .venv. Pastikan dukungan venv tersedia."
+      fail "Failed to create .venv. Ensure venv support is available."
   fi
 
   [[ -f "$ROOT_DIR/requirements-dev.txt" ]] ||
-    fail "File dependensi tidak ditemukan: requirements-dev.txt"
+    fail "Dependency file not found: requirements-dev.txt"
 
   log "Installing workstation dependencies"
   "$ROOT_DIR/.venv/bin/python" -m pip install \
     -r "$ROOT_DIR/requirements-dev.txt" ||
-    fail "Gagal memasang dependensi workstation."
+    fail "Failed to install workstation dependencies."
 
   log "Workstation environment ready"
   printf 'OS: %s\n' "$os_name"
   printf 'Base Python: %s\n' "$python_version"
   printf 'Virtual environment: %s/.venv\n' "$ROOT_DIR"
   printf 'Ansible: %s\n' "$("$ROOT_DIR/.venv/bin/ansible" --version | head -n 1)"
-  printf '\nAktifkan dengan:\n'
+  printf '\nActivate with:\n'
   printf '  source .venv/bin/activate\n'
-  printf 'Lalu jalankan tes:\n'
+  printf 'Then run the tests:\n'
   printf '  ./quick-start.sh test\n'
 }
 
@@ -953,11 +953,11 @@ unit_test() {
     "$ROOT_DIR/tests/test_tailscale_state_guard.sh" \
     "$ROOT_DIR/tests/test_tailscale_login_flow.sh"; do
     [[ -f "$test_script" ]] ||
-      fail "File tes shell tidak ditemukan: $test_script"
+      fail "Shell test file not found: $test_script"
 
     log "Running shell test: ${test_script##*/}"
     bash "$test_script" ||
-      fail "Shell test gagal: ${test_script##*/}"
+      fail "Shell test failed: ${test_script##*/}"
   done
 
   log "Local Python unit tests"
@@ -971,11 +971,11 @@ unit_test() {
   elif command -v python >/dev/null 2>&1; then
     python_bin="$(command -v python)"
   else
-    fail "Python tidak ditemukan. Jalankan ./quick-start.sh setup terlebih dahulu."
+    fail "Python not found. Run ./quick-start.sh setup first."
   fi
 
   [[ -d "$ROOT_DIR/tests" ]] ||
-    fail "Direktori unit test tidak ditemukan: tests/"
+    fail "Unit test directory not found: tests/"
 
   log "Python interpreter: $python_bin"
 
@@ -988,13 +988,13 @@ ollama_test() {
   log "Ollama API smoke test"
 
   [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
-    fail "ansible tidak ditemukan. Jalankan ./quick-start.sh setup terlebih dahulu."
+    fail "Ansible not found. Run ./quick-start.sh setup first."
 
   [[ -f "$INVENTORY_FILE" ]] ||
-    fail "Inventory tidak ditemukan: $INVENTORY_FILE"
+    fail "Inventory not found: $INVENTORY_FILE"
 
   [[ -f tests/ollama_api_smoke.py ]] ||
-    fail "tests/ollama_api_smoke.py tidak ditemukan."
+    fail "tests/ollama_api_smoke.py not found."
 
   ensure_ssh_auth
 
@@ -1016,13 +1016,13 @@ api_test() {
   log "FastAPI gateway smoke test"
 
   [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
-    fail "ansible tidak ditemukan. Jalankan ./quick-start.sh setup terlebih dahulu."
+    fail "Ansible not found. Run ./quick-start.sh setup first."
 
   [[ -f "$INVENTORY_FILE" ]] ||
-    fail "Inventory tidak ditemukan: $INVENTORY_FILE"
+    fail "Inventory not found: $INVENTORY_FILE"
 
   [[ -f "$ROOT_DIR/tests/local_ai_api_smoke.py" ]] ||
-    fail "tests/local_ai_api_smoke.py tidak ditemukan."
+    fail "tests/local_ai_api_smoke.py not found."
 
   ensure_ssh_auth
 
@@ -1069,11 +1069,11 @@ refresh_tool_paths() {
     ANSIBLE_GALAXY_BIN="$(command -v ansible-galaxy || true)"
 
   [[ -n "$ANSIBLE_BIN" && -x "$ANSIBLE_BIN" ]] ||
-    fail "ansible tidak ditemukan setelah setup workstation."
+    fail "Ansible not found after workstation setup."
   [[ -n "$ANSIBLE_PLAYBOOK_BIN" && -x "$ANSIBLE_PLAYBOOK_BIN" ]] ||
-    fail "ansible-playbook tidak ditemukan setelah setup workstation."
+    fail "ansible-playbook not found after workstation setup."
   [[ -n "$ANSIBLE_GALAXY_BIN" && -x "$ANSIBLE_GALAXY_BIN" ]] ||
-    fail "ansible-galaxy tidak ditemukan setelah setup workstation."
+    fail "ansible-galaxy not found after workstation setup."
 }
 
 # Handle help and reject extra arguments before any phase runs.
@@ -1121,7 +1121,7 @@ case "$phase" in
 
   workstation)
     [[ -x "$ROOT_DIR/.venv/bin/ansible-playbook" ]] ||
-      fail "Ansible belum tersedia. Jalankan ./quick-start.sh setup terlebih dahulu."
+      fail "Ansible is not available yet. Run ./quick-start.sh setup first."
     "$ROOT_DIR/.venv/bin/ansible-playbook" \
       -i localhost, "$ROOT_DIR/ansible/playbooks/workstation.yml"
     ;;
