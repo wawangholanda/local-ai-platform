@@ -116,7 +116,14 @@
               (tailscale_backend_status_probe.stdout | default(''))
               is search('"BackendState"\s*:\s*"Running"')
             )
-            else 'Unknown'
+            else (
+              'NeedsLogin'
+              if (
+                (tailscale_backend_status_probe.stdout | default(''))
+                is search('"BackendState"\s*:\s*"NeedsLogin"')
+              )
+              else 'Unknown'
+            )
           }}
         tailscale_client_connected: >-
           {{
@@ -142,28 +149,31 @@
         tailscale_skip_install: "{{ tailscale_client_connected | bool }}"
         tailscale_backup_existing_state: >-
           {{
-            (tailscale_client_connected | bool)
+            (tailscale_server_state_stat.stat.exists | default(false) | bool)
+            and (tailscale_server_state_stat.stat.isreg | default(false) | bool)
+            and (tailscale_server_state_stat.stat.size | default(0) | int > 2)
             and not (tailscale_local_backup_stat.stat.exists | default(false) | bool)
+            and (tailscale_client_connected | bool)
           }}
         tailscale_needs_fresh_login: >-
           {{
             not (tailscale_client_connected | bool)
-            and not (tailscale_local_backup_stat.stat.exists | default(false) | bool)
-            and not (tailscale_server_state_stat.stat.exists | default(false) | bool)
+            and tailscale_backend_state == 'NeedsLogin'
           }}
 
-    - name: Refuse fresh login when an unconnected Tailscale state exists
+    - name: Refuse recovery when an existing state has an unknown backend
       ansible.builtin.assert:
         that:
-          - >-
-            (tailscale_client_connected | bool)
-            or not (tailscale_server_state_stat.stat.exists | default(false) | bool)
-            or (tailscale_local_backup_stat.stat.exists | default(false) | bool)
+          - tailscale_backend_state == 'NeedsLogin'
         fail_msg: >-
-          A Tailscale state file exists on the target, but the client is not
-          healthy and no local backup exists. Automatic fresh login is refused.
-          Inspect the target state before proceeding.
-
+          A Tailscale state file exists, but the backend is not Running or
+          NeedsLogin. Automatic recovery is refused to protect the existing
+          identity. Inspect the service and backend status first.
+      when:
+        - tailscale_server_state_stat.stat.exists | default(false) | bool
+        - tailscale_binary_stat.stat.exists | default(false) | bool
+        - tailscale_service_probe.stdout | default('') | trim == 'active'
+        - not (tailscale_client_connected | bool)
     - name: Report the Tailscale decision
       ansible.builtin.debug:
         msg:
@@ -175,20 +185,11 @@
           - "Local state backup exists: {{ tailscale_local_backup_stat.stat.exists | default(false) }}"
           - "Skip client installation: {{ tailscale_skip_install }}"
 
-    - name: Refuse implicit recovery when a local Tailscale backup exists
-      ansible.builtin.assert:
-        that:
-          - >-
-            not (
-              (tailscale_local_backup_stat.stat.exists | default(false) | bool)
-              and not (tailscale_client_connected | bool)
-            )
-        fail_msg: >-
-          A local Tailscale backup exists, but the target client is not
-          connected. No backup was restored automatically. Inspect the target
-          and run quick-start.sh restore-tailscale explicitly if you intend
-          to restore the saved Tailscale identity.
-
+    - name: Report the Tailscale backup policy
+      ansible.builtin.debug:
+        msg: >-
+          An existing local Tailscale backup will be preserved. It will not be
+          restored or overwritten implicitly during fresh-login recovery.
     - name: Require a usable server state before backing it up
       ansible.builtin.assert:
         that:

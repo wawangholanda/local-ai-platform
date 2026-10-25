@@ -65,6 +65,11 @@ run_playbook() {
   printf 'playbook:%s\n' "$1" >> "$MOCK_LOG"
 }
 
+tailscale_auth_flow() {
+  printf 'tailscale_auth_flow\n' >> "$MOCK_LOG"
+  [[ "${MOCK_TAILSCALE_AUTH_FAIL:-0}" != 1 ]]
+}
+
 verify_gpu() {
   printf 'verify_gpu\n' >> "$MOCK_LOG"
 }
@@ -104,6 +109,25 @@ run_default() {
   printf '%s' "$status"
 }
 
+assert_tailscale_auth_order() {
+  local log_file="$1"
+  local auth_count tailscale_line auth_line gpu_line
+
+  auth_count="$(grep -c '^tailscale_auth_flow$' "$log_file" || true)"
+  [[ "$auth_count" == 1 ]] ||
+    fail "Tailscale authentication must run exactly once in all phase"
+
+  tailscale_line="$(grep -n '^playbook:tailscale-client$' "$log_file" | cut -d: -f1)"
+  auth_line="$(grep -n '^tailscale_auth_flow$' "$log_file" | cut -d: -f1)"
+  gpu_line="$(grep -n '^playbook:gpu$' "$log_file" | cut -d: -f1)"
+
+  [[ -n "$tailscale_line" && -n "$auth_line" && -n "$gpu_line" ]] ||
+    fail "Required Tailscale/GPU steps were not recorded"
+
+  (( tailscale_line < auth_line && auth_line < gpu_line )) ||
+    fail "Tailscale authentication is not between tailscale-client and GPU"
+}
+
 # Case 1: tools missing; setup then tests then all.
 fixture="$TMP_DIR/missing-tools"
 log_file="$TMP_DIR/missing.log"
@@ -115,7 +139,8 @@ status="$(run_default "$fixture" "$log_file")"
 [[ "$(sed -n '2p' "$log_file")" == test ]] || fail "Tes tidak berjalan setelah setup"
 grep -qx preflight "$log_file" || fail "Fase all tidak berlanjut setelah tes sukses"
 grep -qx validate "$log_file" || fail "Validasi akhir fase all tidak berjalan"
-pass "Tools missing: setup → test → all"
+assert_tailscale_auth_order "$log_file"
+pass "Tools missing: setup → test → all, including Tailscale authentication"
 
 # Case 2: tools already available; setup must be skipped.
 fixture="$TMP_DIR/tools-present"
@@ -129,7 +154,8 @@ if grep -qx setup "$log_file"; then
   fail "Setup ran even though all tools are available"
 fi
 grep -qx preflight "$log_file" || fail "Fase all tidak berjalan"
-pass "Tools available: skip setup, then test and all"
+assert_tailscale_auth_order "$log_file"
+pass "Tools available: skip setup, then test and all, including Tailscale authentication"
 
 # Case 3: tests fail; all must not begin.
 fixture="$TMP_DIR/test-failure"
@@ -169,5 +195,44 @@ fi
 [[ "$status" == 0 ]] || fail "Fase test eksplisit gagal"
 [[ "$(cat "$log_file")" == test ]] || fail "Fase test memanggil setup atau all"
 pass "Explicit test phase runs tests only"
+
+
+# Case 6: successful authentication must precede proxy configuration.
+fixture="$TMP_DIR/tailscale-phase"
+log_file="$TMP_DIR/tailscale-phase.log"
+make_fixture "$fixture" yes
+
+if MOCK_LOG="$log_file" bash "$fixture/quick-start.sh" tailscale \
+    >"$TMP_DIR/tailscale-phase.output" 2>&1; then
+  :
+else
+  fail "Fase tailscale gagal meskipun autentikasi tiruan berhasil"
+fi
+
+expected="$(printf '%s\n' \
+  ssh_config \
+  preflight \
+  playbook:bootstrap \
+  playbook:tailscale-client \
+  tailscale_auth_flow \
+  playbook:open-webui-proxy)"
+[[ "$(cat "$log_file")" == "$expected" ]] ||
+  fail "Urutan autentikasi dan proxy pada fase tailscale salah"
+pass "Tailscale phase: authentication succeeds before proxy configuration"
+
+# Case 7: failed authentication must prevent proxy configuration.
+log_file="$TMP_DIR/tailscale-auth-fail.log"
+if MOCK_LOG="$log_file" MOCK_TAILSCALE_AUTH_FAIL=1 \
+    bash "$fixture/quick-start.sh" tailscale \
+    >"$TMP_DIR/tailscale-auth-fail.output" 2>&1; then
+  fail "Fase tailscale seharusnya gagal jika autentikasi gagal"
+fi
+
+if grep -qx 'playbook:open-webui-proxy' "$log_file"; then
+  fail "Proxy dijalankan setelah autentikasi gagal"
+fi
+grep -qx 'tailscale_auth_flow' "$log_file" ||
+  fail "Autentikasi tidak tercatat pada kasus gagal"
+pass "Tailscale phase: failed authentication prevents proxy configuration"
 
 printf '\n%s\n' 'All default-flow tests passed.'

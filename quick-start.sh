@@ -567,10 +567,11 @@ run_ansible() {
 tailscale_auth_flow() {
   log "Memeriksa status autentikasi Tailscale"
 
-  local output="" login_url="" elapsed=0 backend_state="" ts_ip=""
+  local output="" login_url="" elapsed=0 backend_state="" ts_ip="" ts_output=""
   local status_command="tailscale status --json"
+  local restore_output="" restore_log=""
 
-  # A status-read failure is not a reason to initiate a new login.
+  # Jangan memulai pemulihan jika status server tidak bisa dibaca.
   if ! output="$(run_ansible ai_servers -b -m command \
       -a "$status_command" 2>&1)"; then
     printf '%s\n' "$output" >&2
@@ -586,41 +587,78 @@ tailscale_auth_flow() {
     fail "Unrecognized BackendState. A new login will not be initiated."
   fi
 
+  # Jika sudah sehat, pertahankan identitas dan lewati restore/login.
   if [[ "$backend_state" == "Running" ]]; then
-    if ! ts_ip="$(run_ansible ai_servers -b -m command \
+    if ! ts_output="$(run_ansible ai_servers -b -m command \
         -a 'tailscale ip -4' 2>&1)"; then
-      printf '%s\n' "$ts_ip" >&2
+      printf '%s\n' "$ts_output" >&2
       fail "Tailscale is running, but its IPv4 address could not be read."
     fi
 
+    ts_ip="$(extract_tailscale_ipv4 "$ts_output" 2>/dev/null || true)"
     if ! is_valid_tailscale_ipv4 "$ts_ip"; then
       printf '%s\n' "$ts_ip" >&2
       fail "Tailscale IPv4 address not found or invalid."
     fi
 
-    echo "Tailscale is already connected; skipping new login."
+    echo "Tailscale is already connected; skipping restore and new login."
+    backup_tailscale
     return 0
   fi
 
-  # Do not implicitly initiate a new login when local state exists.
-  # Check on the server; never read or print the contents of the state file.
-  local state_probe=""
-  if ! state_probe="$(run_ansible ai_servers -b -m shell \
-      -a 'if test -f /var/lib/tailscale/tailscaled.state; then echo TAILSCALE_STATE_EXISTS; else echo TAILSCALE_STATE_ABSENT; fi' 2>&1)"; then
-    printf '%s\\n' "$state_probe" >&2
-    fail "Tailscale state-file check failed. A new login will not be initiated."
+  # NeedsLogin: coba restore melalui playbook yang memvalidasi backup
+  # dan menjaga file backup yang sudah ada. Kegagalan restore tidak
+  # menghapus backup dan tidak memindahkan state server ke quarantine.
+  mkdir -p -- "$ROOT_DIR/.secrets" ||
+    fail "Unable to create the protected .secrets directory."
+  chmod 700 "$ROOT_DIR/.secrets" ||
+    fail "Unable to secure the .secrets directory."
+
+  restore_log="$(mktemp "$ROOT_DIR/.secrets/.tailscale-restore.XXXXXX")"
+  chmod 600 "$restore_log"
+
+  if run_playbook tailscale-state-restore >"$restore_log" 2>&1; then
+    echo "Tailscale state restore playbook completed; checking backend health."
+  else
+    echo "Tailscale state restore was unavailable or unsuccessful; checking current backend before login."
+    cat "$restore_log" >&2
+  fi
+  rm -f -- "$restore_log"
+
+  # Beri tailscaled waktu singkat setelah restore, lalu periksa kembali.
+  sleep 3
+  if ! output="$(run_ansible ai_servers -b -m command \
+      -a "$status_command" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    fail "Tailscale status check failed after restore. A new login will not be initiated."
   fi
 
-  if grep -q 'TAILSCALE_STATE_EXISTS' <<<"$state_probe"; then
-    fail "Existing Tailscale state is present and the backend reports NeedsLogin. New login is blocked. A backup is available; explicitly select and run the recovery procedure."
+  if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
+    if ! ts_output="$(run_ansible ai_servers -b -m command \
+        -a 'tailscale ip -4' 2>&1)"; then
+      printf '%s\n' "$ts_output" >&2
+      fail "Restored Tailscale backend is running, but its IPv4 address could not be read."
+    fi
+
+    ts_ip="$(extract_tailscale_ipv4 "$ts_output" 2>/dev/null || true)"
+    if ! is_valid_tailscale_ipv4 "$ts_ip"; then
+      printf '%s\n' "$ts_ip" >&2
+      fail "Restored Tailscale IPv4 address not found or invalid."
+    fi
+
+    echo "Tailscale identity restored and IPv4 validated."
+    backup_tailscale
+    return 0
+  elif grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"NeedsLogin"' <<<"$output"; then
+    backend_state="NeedsLogin"
+  else
+    printf '%s\n' "$output" >&2
+    fail "Unrecognized BackendState after restore. A new login will not be initiated."
   fi
 
-  if ! grep -q 'TAILSCALE_STATE_ABSENT' <<<"$state_probe"; then
-    printf '%s\\n' "$state_probe" >&2
-    fail "Unrecognized state-file check result. A new login will not be initiated."
-  fi
-
-  # Hanya NeedsLogin tanpa file state lama yang boleh memulai login baru.
+  # Login tetap dijalankan dari Bash quick-start, bukan playbook YAML.
+  # Jangan blokir hanya karena file state masih ada: restore sudah dicoba,
+  # dan backend telah diperiksa ulang serta secara eksplisit NeedsLogin.
   if ! output="$(run_ansible ai_servers -b -m command \
       -a 'tailscale up' 2>&1)"; then
     printf '%s\n' "$output" >&2
@@ -647,14 +685,16 @@ tailscale_auth_flow() {
     fi
 
     if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
-      if ! ts_ip="$(run_ansible ai_servers -b -m command \
+      if ! ts_output="$(run_ansible ai_servers -b -m command \
           -a 'tailscale ip -4' 2>&1)"; then
-        printf '%s\n' "$ts_ip" >&2
+        printf '%s\n' "$ts_output" >&2
         fail "Backend is running, but its IPv4 address could not be read."
       fi
 
+      ts_ip="$(extract_tailscale_ipv4 "$ts_output" 2>/dev/null || true)"
       if is_valid_tailscale_ipv4 "$ts_ip"; then
         echo "Tailscale is connected and an IPv4 address has been detected."
+        backup_tailscale
         return 0
       fi
     elif ! grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"NeedsLogin"' <<<"$output"; then
@@ -670,8 +710,25 @@ tailscale_auth_flow() {
   fail "Tailscale authentication was not confirmed within 5 minutes."
 }
 
+extract_tailscale_ipv4() {
+  local line candidate=""
+  local count=0
+
+  while IFS= read -r line; do
+    line="$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$line")"
+    if [[ "$line" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+      candidate="$line"
+      count=$((count + 1))
+    fi
+  done <<<"${1:-}"
+
+  # Reject ambiguous output rather than guessing which address is intended.
+  [[ "$count" -eq 1 ]] || return 1
+  printf '%s\n' "$candidate"
+}
+
 is_valid_tailscale_ipv4() {
-  local ip octet
+  local ip octet second_octet
   local -a octets
 
   ip="$(tr -d '[:space:]\r' <<<"${1:-}")"
@@ -681,10 +738,19 @@ is_valid_tailscale_ipv4() {
   [[ ${#octets[@]} -eq 4 ]] || return 1
 
   for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
     (( 10#$octet <= 255 )) || return 1
   done
 
+  second_octet=$((10#${octets[1]}))
+  (( second_octet >= 64 && second_octet <= 127 )) || return 1
+
   return 0
+}
+
+tailscale_auth_and_proxy_flow() {
+  tailscale_auth_flow || return $?
+  run_playbook open-webui-proxy
 }
 
 backup_tailscale() {
@@ -1160,7 +1226,7 @@ case "$phase" in
     preflight
     run_playbook bootstrap
     run_playbook tailscale-client
-    tailscale_auth_flow
+    tailscale_auth_and_proxy_flow
     ;;
 
   restore-tailscale)
@@ -1211,6 +1277,7 @@ case "$phase" in
     run_playbook bootstrap
     run_playbook security-baseline
     run_playbook tailscale-client
+    tailscale_auth_flow
 
     run_playbook gpu
     ensure_gpu_ready

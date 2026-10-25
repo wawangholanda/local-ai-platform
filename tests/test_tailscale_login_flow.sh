@@ -23,9 +23,23 @@ pass "Playbook does not run tailscale up or interactive pauses"
 grep -q 'tailscale_auth_flow()' "$QUICK_START" ||
   fail "Bash authentication function not found"
 
-grep -q 'restore-tailscale' "$PLAYBOOK" ||
-  grep -q 'Refuse implicit recovery when a local Tailscale backup exists' "$PLAYBOOK" ||
-  fail "Backup recovery guard not found"
+grep -q 'Verify published client backup matches its staging file' "$PLAYBOOK" ||
+  fail "Verified local state backup step not found"
+
+if grep -Eq 'tailscaled\.state\.pre-fresh-login|Move old Tailscale state into quarantine|Require successful state quarantine before fresh login' "$PLAYBOOK"; then
+  fail "Obsolete quarantine logic remains in the client playbook"
+fi
+pass "Client playbook does not quarantine existing state"
+
+grep -q 'run_playbook tailscale-state-restore' "$QUICK_START" ||
+  fail "Restore attempt is missing from the Bash authentication flow"
+
+grep -q 'backup_tailscale' "$QUICK_START" ||
+  fail "Backup call is missing from the authentication flow"
+
+if grep -q 'Refuse implicit recovery when a local Tailscale backup exists' "$PLAYBOOK"; then
+  fail "Obsolete guard still blocks fresh login when a local backup exists"
+fi
 
 # Extract the function without running the quick-start.sh dispatcher.
 tmpdir="$(mktemp -d)"
@@ -92,14 +106,21 @@ run_ansible() {
         running-valid-ip|running-invalid-ip)
           printf '{"BackendState":"Running"}\n'
           ;;
-        login-success)
+        restore-success)
           if (( status_count == 1 )); then
             printf '{"BackendState":"NeedsLogin"}\n'
           else
             printf '{"BackendState":"Running"}\n'
           fi
           ;;
-        login-timeout|state-exists)
+        login-success|login-success-after-restore-failure|state-exists)
+          if (( status_count <= 2 )); then
+            printf '{"BackendState":"NeedsLogin"}\n'
+          else
+            printf '{"BackendState":"Running"}\n'
+          fi
+          ;;
+        login-timeout)
           printf '{"BackendState":"NeedsLogin"}\n'
           ;;
         *)
@@ -110,11 +131,11 @@ run_ansible() {
       ;;
     "tailscale ip -4")
       case "$SCENARIO" in
-        running-valid-ip|login-success)
-          printf '100.100.83.33\n'
+        running-valid-ip|restore-success|login-success|login-success-after-restore-failure|state-exists)
+          printf 'ai-server | CHANGED | rc=0 >>\n100.100.83.33\n'
           ;;
         running-invalid-ip)
-          printf '999.999.999.999\n'
+          printf 'ai-server | CHANGED | rc=0 >>\n999.999.999.999\n'
           ;;
         *)
           printf 'mock: no IPv4\n' >&2
@@ -133,7 +154,7 @@ run_ansible() {
       esac
       ;;
     "tailscale up")
-      if [[ "$SCENARIO" == "login-success" || "$SCENARIO" == "login-timeout" ]]; then
+      if [[ "$SCENARIO" == "login-success" || "$SCENARIO" == "login-success-after-restore-failure" || "$SCENARIO" == "login-timeout" || "$SCENARIO" == "state-exists" ]]; then
         printf 'To authenticate, visit: https://login.tailscale.com/a/mock\n'
       else
         echo "Unexpected tailscale up invocation" >&2
@@ -145,6 +166,27 @@ run_ansible() {
       return 92
       ;;
   esac
+}
+
+run_playbook() {
+  local playbook="${1:-}"
+  printf 'playbook:%s\n' "$playbook" >> "$CALL_LOG"
+  case "$SCENARIO" in
+    restore-success)
+      [[ "$playbook" == "tailscale-state-restore" ]] || return 90
+      return 0
+      ;;
+    *)
+      [[ "$playbook" == "tailscale-state-restore" ]] || return 90
+      echo "mock restore unavailable: no usable backup" >&2
+      return 1
+      ;;
+  esac
+}
+
+backup_tailscale() {
+  printf '%s\n' 'backup_tailscale' >> "$CALL_LOG"
+  return 0
 }
 
 source "$FUNCTION_FILE"
@@ -162,7 +204,10 @@ run_case() {
 
   : > "$log_file"
 
-  FUNCTION_FILE="$tmpdir/auth-function.sh" \
+  mkdir -p "$tmpdir/.secrets"
+
+  ROOT_DIR="$tmpdir" \
+    FUNCTION_FILE="$tmpdir/auth-function.sh" \
     bash "$tmpdir/driver.sh" "$scenario" "$log_file" \
     >"$output_file" 2>&1 || rc=$?
 
@@ -193,7 +238,7 @@ grep -q 'Unrecognized BackendState' "$out" ||
 pass "Unknown BackendState is rejected without a new login"
 
 out="$(run_case running-valid-ip 0 0)"
-grep -q 'skipping new login' "$out" ||
+grep -q 'skipping restore and new login' "$out" ||
   fail "Running with a valid IPv4 address was not recognized"
 pass "Running with a valid IPv4 address skips login"
 
@@ -202,12 +247,29 @@ grep -q 'Tailscale IPv4 address not found' "$out" ||
   fail "Invalid IPv4 was not rejected"
 pass "An invalid Tailscale IPv4 address is rejected"
 
-out="$(run_case state-exists 42 0)"
-grep -q 'Existing Tailscale state is present' "$out" ||
-  fail "State lama tidak memblokir login baru"
-pass "Existing state blocks tailscale up without modifying server state"
+out="$(run_case restore-success 0 0)"
+grep -q 'identity restored and IPv4 validated' "$out" ||
+  fail "Successful restore was not confirmed"
+grep -q '^playbook:tailscale-state-restore$' "$tmpdir/restore-success.calls" ||
+  fail "Restore playbook was not invoked"
+grep -q '^backup_tailscale$' "$tmpdir/restore-success.calls" ||
+  fail "Successful restore did not trigger backup"
+pass "Successful restore skips login and validates the IPv4 address"
 
-out="$(run_case login-success 0 1)"
+out="$(run_case state-exists 0 1)"
+grep -q 'login.tailscale.com/a/mock' "$out" ||
+  fail "Existing state incorrectly blocked login after restore was attempted"
+grep -q '^playbook:tailscale-state-restore$' "$tmpdir/state-exists.calls" ||
+  fail "Restore was not attempted before login"
+grep -q '^backup_tailscale$' "$tmpdir/state-exists.calls" ||
+  fail "Successful login did not trigger backup"
+up_line="$(grep -nFx 'tailscale up' "$tmpdir/state-exists.calls" | head -n1 | cut -d: -f1)"
+restore_line="$(grep -nFx 'playbook:tailscale-state-restore' "$tmpdir/state-exists.calls" | head -n1 | cut -d: -f1)"
+[[ -n "$restore_line" && -n "$up_line" && "$restore_line" -lt "$up_line" ]] ||
+  fail "Login was invoked before the restore attempt"
+pass "Existing state does not block login after restore fails and NeedsLogin is confirmed"
+
+out="$(run_case login-success-after-restore-failure 0 1)"
 grep -q 'login.tailscale.com/a/mock' "$out" ||
   fail "Authentication URL was not displayed"
 grep -q 'IPv4 address has been detected' "$out" ||
