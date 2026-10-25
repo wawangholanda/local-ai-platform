@@ -606,74 +606,53 @@ tailscale_auth_flow() {
     return 0
   fi
 
-  # NeedsLogin: coba restore melalui playbook yang memvalidasi backup
-  # dan menjaga file backup yang sudah ada. Kegagalan restore tidak
-  # menghapus backup dan tidak memindahkan state server ke quarantine.
-  mkdir -p -- "$ROOT_DIR/.secrets" ||
-    fail "Unable to create the protected .secrets directory."
-  chmod 700 "$ROOT_DIR/.secrets" ||
-    fail "Unable to secure the .secrets directory."
+  # Fresh login: invoke tailscale up directly over SSH, not through Ansible.
+  local server_host="" server_user="" target=""
+  local -a direct_ssh
 
-  restore_log="$(mktemp "$ROOT_DIR/.secrets/.tailscale-restore.XXXXXX")"
-  chmod 600 "$restore_log"
+  server_host="$(awk '
+    /^[[:space:]]*ai_server:[[:space:]]*$/ { in_host=1; next }
+    in_host && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*$/ { exit }
+    in_host && /^[[:space:]]*ansible_host:/ {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      gsub(/[\042\047]/, "")
+      print
+      exit
+    }
+  ' "$INVENTORY_FILE")"
 
-  if run_playbook tailscale-state-restore >"$restore_log" 2>&1; then
-    echo "Tailscale state restore playbook completed; checking backend health."
-  else
-    echo "Tailscale state restore was unavailable or unsuccessful; checking current backend before login."
-    cat "$restore_log" >&2
-  fi
-  rm -f -- "$restore_log"
+  server_user="$(awk '
+    /^[[:space:]]*ai_server:[[:space:]]*$/ { in_host=1; next }
+    in_host && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*$/ { exit }
+    in_host && /^[[:space:]]*ansible_user:/ {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      gsub(/[\042\047]/, "")
+      print
+      exit
+    }
+  ' "$INVENTORY_FILE")"
 
-  # Beri tailscaled waktu singkat setelah restore, lalu periksa kembali.
-  sleep 3
-  if ! output="$(run_ansible ai_servers -b -m command \
-      -a "$status_command" 2>&1)"; then
-    printf '%s\n' "$output" >&2
-    fail "Tailscale status check failed after restore. A new login will not be initiated."
-  fi
+  [[ -n "$server_host" && -n "$server_user" ]] ||
+    fail "Unable to read ansible_host/ansible_user for ai_server."
 
-  if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
-    if ! ts_output="$(run_ansible ai_servers -b -m command \
-        -a 'tailscale ip -4' 2>&1)"; then
-      printf '%s\n' "$ts_output" >&2
-      fail "Restored Tailscale backend is running, but its IPv4 address could not be read."
-    fi
+  [[ -n "${BECOME_PASSWORD_FILE:-}" && -r "$BECOME_PASSWORD_FILE" ]] ||
+    fail "Sudo password file is unavailable."
 
-    ts_ip="$(extract_tailscale_ipv4 "$ts_output" 2>/dev/null || true)"
-    if ! is_valid_tailscale_ipv4 "$ts_ip"; then
-      printf '%s\n' "$ts_ip" >&2
-      fail "Restored Tailscale IPv4 address not found or invalid."
-    fi
+  target="${server_user}@${server_host}"
+  direct_ssh=(ssh "${SSH_HOST_KEY_ARGS[@]}" -tt)
 
-    echo "Tailscale identity restored and IPv4 validated."
-    backup_tailscale
-    return 0
-  elif grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"NeedsLogin"' <<<"$output"; then
-    backend_state="NeedsLogin"
-  else
-    printf '%s\n' "$output" >&2
-    fail "Unrecognized BackendState after restore. A new login will not be initiated."
+  if [[ -n "${SSH_PASSWORD_FILE:-}" ]]; then
+    command -v sshpass >/dev/null 2>&1 ||
+      fail "sshpass is required for SSH password authentication."
+    direct_ssh=(sshpass -f "$SSH_PASSWORD_FILE" ssh "${SSH_HOST_KEY_ARGS[@]}" -tt)
   fi
 
-  # Login tetap dijalankan dari Bash quick-start, bukan playbook YAML.
-  # Jangan blokir hanya karena file state masih ada: restore sudah dicoba,
-  # dan backend telah diperiksa ulang serta secara eksplisit NeedsLogin.
-  if ! output="$(run_ansible ai_servers -b -m command \
-      -a 'tailscale up' 2>&1)"; then
-    printf '%s\n' "$output" >&2
-    fail "The tailscale up command failed."
-  fi
+  printf '\n%s\n' "Starting tailscale up directly on $target."
+  printf '%s\n\n' "Complete authentication using the URL displayed below."
 
-  login_url="$(grep -Eo \
-    'https://login\.tailscale\.com/[[:alnum:]_/?=&.-]+' \
-    <<<"$output" | head -n1 || true)"
-
-  if [[ -n "$login_url" ]]; then
-    printf '\n%s\n' "Open the following URL to complete authentication:"
-    printf '%s\n\n' "$login_url"
-  else
-    printf '%s\n' "$output"
+  if ! "${direct_ssh[@]}" "$target" \
+      "sudo -S -p '' tailscale up" < "$BECOME_PASSWORD_FILE"; then
+    fail "Direct SSH invocation of tailscale up failed."
   fi
 
   echo "Waiting for authentication (up to 5 minutes)..."
