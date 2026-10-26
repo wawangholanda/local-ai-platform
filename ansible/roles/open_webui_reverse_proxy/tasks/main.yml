@@ -312,6 +312,9 @@
   when: not open_webui_proxy_certificate_stat.stat.exists
   no_log: true
 
+- name: Configure the private Ollama API DNS and certificate
+  ansible.builtin.include_tasks: ollama-api.yml
+
 - name: Ensure Certbot renewal deploy-hook directory exists
   ansible.builtin.file:
     path: /etc/letsencrypt/renewal-hooks/deploy
@@ -397,6 +400,34 @@
     group: root
   notify: Restart Nginx
 
+- name: Install the Ollama API authorization map
+  ansible.builtin.template:
+    src: ollama-api-auth.conf.j2
+    dest: "{{ open_webui_proxy_ollama_auth_map_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Nginx
+
+- name: Deploy the private Ollama API Nginx site
+  ansible.builtin.template:
+    src: ollama-api-site.conf.j2
+    dest: "{{ open_webui_proxy_ollama_nginx_site_available }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Nginx
+
+- name: Enable the private Ollama API Nginx site
+  ansible.builtin.file:
+    src: "{{ open_webui_proxy_ollama_nginx_site_available }}"
+    dest: "{{ open_webui_proxy_ollama_nginx_site_enabled }}"
+    state: link
+    owner: root
+    group: root
+  notify: Restart Nginx
+
 - name: Reload systemd after Nginx dependency changes
   ansible.builtin.systemd_service:
     daemon_reload: true
@@ -441,6 +472,67 @@
   until:
     - open_webui_proxy_https_check.rc == 0
     - open_webui_proxy_https_check.stdout is match('^[23][0-9][0-9]$')
+
+- name: Verify the Ollama API rejects requests without a Bearer token
+  ansible.builtin.command:
+    argv:
+      - curl
+      - --silent
+      - --show-error
+      - --output
+      - /dev/null
+      - --write-out
+      - "%{http_code}"
+      - --max-time
+      - "10"
+      - --resolve
+      - "{{ open_webui_proxy_ollama_domain }}:443:{{ open_webui_proxy_tailscale_ip }}"
+      - "https://{{ open_webui_proxy_ollama_domain }}/api/tags"
+  register: ollama_api_unauthenticated_check
+  changed_when: false
+  failed_when: false
+  retries: 6
+  delay: 2
+  until:
+    - ollama_api_unauthenticated_check.rc == 0
+    - ollama_api_unauthenticated_check.stdout == "401"
+
+- name: Assert the Ollama API rejects unauthenticated requests
+  ansible.builtin.assert:
+    that:
+      - ollama_api_unauthenticated_check.rc == 0
+      - ollama_api_unauthenticated_check.stdout == "401"
+    fail_msg: >-
+      The Ollama API endpoint did not return HTTP 401 without a Bearer token.
+      Check the Nginx authorization map and API virtual host.
+
+- name: Verify the Ollama API accepts a valid Bearer token
+  ansible.builtin.uri:
+    url: "https://{{ open_webui_proxy_ollama_domain }}/api/tags"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ lookup('ansible.builtin.env', 'OLLAMA_API_KEY') | trim }}"
+      Accept: application/json
+    return_content: false
+    status_code: 200
+    validate_certs: true
+    timeout: 10
+  register: ollama_api_authenticated_check
+  changed_when: false
+  failed_when: false
+  retries: 6
+  delay: 2
+  until: ollama_api_authenticated_check.status | default(0) == 200
+  no_log: true
+
+- name: Assert the Ollama API accepts the configured Bearer token
+  ansible.builtin.assert:
+    that:
+      - ollama_api_authenticated_check.status | default(0) == 200
+    fail_msg: >-
+      The Ollama API did not return HTTP 200 with the configured Bearer token.
+      Check API key consistency, DNS resolution, TLS, and Nginx authorization.
+  no_log: true
 
 - name: Assert that the HTTPS endpoint responds successfully
   ansible.builtin.assert:

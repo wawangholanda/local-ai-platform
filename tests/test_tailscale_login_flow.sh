@@ -70,6 +70,21 @@ fail() {
 }
 sleep() { :; }
 
+# Mock direct SSH so tests never contact a real server.
+ssh() {
+  printf '%s\n' 'tailscale up' >> "$CALL_LOG"
+  case "$SCENARIO" in
+    login-success|login-success-after-restore-failure|login-timeout|state-exists)
+      printf '%s\n' 'To authenticate, visit: https://login.tailscale.com/a/mock'
+      return 0
+      ;;
+    *)
+      echo "Unexpected direct SSH invocation" >&2
+      return 91
+      ;;
+  esac
+}
+
 run_ansible() {
   local arg="" i
   local -a args=("$@")
@@ -206,8 +221,26 @@ run_case() {
 
   mkdir -p "$tmpdir/.secrets"
 
+  local inventory_file="$tmpdir/$scenario.inventory.yml"
+  local password_file="$tmpdir/$scenario.sudo-password"
+
+  cat > "$inventory_file" <<'INVENTORY'
+all:
+  children:
+    ai_servers:
+      hosts:
+        ai_server:
+          ansible_host: 192.0.2.10
+          ansible_user: testuser
+INVENTORY
+
+  printf '%s\n' 'test-only-password' > "$password_file"
+  chmod 600 "$password_file"
+
   ROOT_DIR="$tmpdir" \
     FUNCTION_FILE="$tmpdir/auth-function.sh" \
+    INVENTORY_FILE="$inventory_file" \
+    BECOME_PASSWORD_FILE="$password_file" \
     bash "$tmpdir/driver.sh" "$scenario" "$log_file" \
     >"$output_file" 2>&1 || rc=$?
 

@@ -8,7 +8,7 @@ ollama_compose_file: /srv/ai/ollama/compose.yml
 ollama_network: ai_backend
 ollama_container_name: ollama
 ollama_models:
-  - "qwen3.5:2b-q4_K_M"
+  # - "qwen3.5:2b-q4_K_M"
   - "qwen3.5:4b-q4_K_M"
   - "qwen2.5-coder:3b"
 

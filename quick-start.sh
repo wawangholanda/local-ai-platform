@@ -243,6 +243,7 @@ load_env() {
   # Prevent accidental dependence on inherited shell values.
   CLOUDFLARE_API_TOKEN=""
   OPEN_WEBUI_DOMAIN=""
+  OLLAMA_API_KEY=""
 
   env_file_dir="$(dirname -- "$ENV_FILE")"
 
@@ -281,6 +282,12 @@ load_env() {
     )"
     [[ "$domain_default" == *"example.com"* ]] && domain_default=""
     [[ "$domain_default" == *"example.net"* ]] && domain_default=""
+  fi
+
+  # Generate a private Ollama API key if missing or invalid.
+  if [[ ! "${OLLAMA_API_KEY:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then
+    OLLAMA_API_KEY="$(openssl rand -hex 32)" ||
+      fail "Unable to generate OLLAMA_API_KEY."
   fi
 
   # Treat obvious token placeholders as missing.
@@ -350,6 +357,7 @@ load_env() {
     if ! awk '
       /^[[:space:]]*(export[[:space:]]+)?CLOUDFLARE_API_TOKEN=/ { next }
       /^[[:space:]]*(export[[:space:]]+)?OPEN_WEBUI_DOMAIN=/ { next }
+      /^[[:space:]]*(export[[:space:]]+)?OLLAMA_API_KEY=/ { next }
       { print }
     ' "$ENV_FILE" > "$temp_env"; then
       rm -f -- "$temp_env"
@@ -360,6 +368,7 @@ load_env() {
   if ! {
     printf 'CLOUDFLARE_API_TOKEN=%q\n' "$CLOUDFLARE_API_TOKEN"
     printf 'OPEN_WEBUI_DOMAIN=%q\n' "$OPEN_WEBUI_DOMAIN"
+    printf 'OLLAMA_API_KEY=%q\n' "$OLLAMA_API_KEY"
   } >> "$temp_env"; then
     rm -f -- "$temp_env"
     fail "Failed to write configuration."
@@ -378,7 +387,7 @@ load_env() {
   chmod 600 "$ENV_FILE" ||
     fail "Configuration was saved, but applying permission 600 failed."
 
-  export CLOUDFLARE_API_TOKEN OPEN_WEBUI_DOMAIN
+  export CLOUDFLARE_API_TOKEN OPEN_WEBUI_DOMAIN OLLAMA_API_KEY
 }
 
 preflight() {
@@ -605,6 +614,57 @@ tailscale_auth_flow() {
     backup_tailscale
     return 0
   fi
+
+  # NeedsLogin: coba restore melalui playbook yang memvalidasi backup
+  # dan menjaga file backup yang sudah ada. Kegagalan restore tidak
+  # menghapus backup dan tidak memindahkan state server ke quarantine.
+  mkdir -p -- "$ROOT_DIR/.secrets" ||
+    fail "Unable to create the protected .secrets directory."
+  chmod 700 "$ROOT_DIR/.secrets" ||
+    fail "Unable to secure the .secrets directory."
+
+  restore_log="$(mktemp "$ROOT_DIR/.secrets/.tailscale-restore.XXXXXX")"
+  chmod 600 "$restore_log"
+
+  if run_playbook tailscale-state-restore >"$restore_log" 2>&1; then
+    echo "Tailscale state restore playbook completed; checking backend health."
+  else
+    echo "Tailscale state restore was unavailable or unsuccessful; checking current backend before login."
+    cat "$restore_log" >&2
+  fi
+  rm -f -- "$restore_log"
+
+  # Beri tailscaled waktu singkat setelah restore, lalu periksa kembali.
+  sleep 3
+  if ! output="$(run_ansible ai_servers -b -m command \
+      -a "$status_command" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    fail "Tailscale status check failed after restore. A new login will not be initiated."
+  fi
+
+  if grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"' <<<"$output"; then
+    if ! ts_output="$(run_ansible ai_servers -b -m command \
+        -a 'tailscale ip -4' 2>&1)"; then
+      printf '%s\n' "$ts_output" >&2
+      fail "Restored Tailscale backend is running, but its IPv4 address could not be read."
+    fi
+
+    ts_ip="$(extract_tailscale_ipv4 "$ts_output" 2>/dev/null || true)"
+    if ! is_valid_tailscale_ipv4 "$ts_ip"; then
+      printf '%s\n' "$ts_ip" >&2
+      fail "Restored Tailscale IPv4 address not found or invalid."
+    fi
+
+    echo "Tailscale identity restored and IPv4 validated."
+    backup_tailscale
+    return 0
+  elif grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"NeedsLogin"' <<<"$output"; then
+    backend_state="NeedsLogin"
+  else
+    printf '%s\n' "$output" >&2
+    fail "Unrecognized BackendState after restore. A new login will not be initiated."
+  fi
+
 
   # Fresh login: invoke tailscale up directly over SSH, not through Ansible.
   local server_host="" server_user="" target=""

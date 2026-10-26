@@ -1,0 +1,10 @@
+# Managed by Ansible: local-ai-platform.
+# Restrict access to clients presenting the configured Bearer token.
+
+# Accommodate the full Bearer token as a map key.
+map_hash_bucket_size 128;
+
+map $http_authorization $ollama_api_authorized {
+    default 0;
+    "Bearer {{ lookup('ansible.builtin.env', 'OLLAMA_API_KEY') | trim }}" 1;
+}

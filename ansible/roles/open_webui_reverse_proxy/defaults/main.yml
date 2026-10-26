@@ -4,6 +4,15 @@ open_webui_proxy_domain: "{{ lookup('ansible.builtin.env', 'OPEN_WEBUI_DOMAIN') 
 
 open_webui_proxy_backend: "http://127.0.0.1:3000"
 
+# Derive the API hostname from the same parent domain as Open WebUI.
+open_webui_proxy_ollama_domain: "{{ 'ollama.' + open_webui_proxy_domain.split('.', 1)[1] }}"
+open_webui_proxy_ollama_backend: "http://127.0.0.1:11434"
+open_webui_proxy_ollama_certificate_name: "local-ai-platform-ollama-{{ open_webui_proxy_domain.split('.', 1)[1] | replace('.', '-') }}"
+open_webui_proxy_ollama_certificate_dir: "/etc/letsencrypt/live/{{ open_webui_proxy_ollama_certificate_name }}"
+open_webui_proxy_ollama_nginx_site_available: "/etc/nginx/sites-available/local-ai-ollama-api"
+open_webui_proxy_ollama_nginx_site_enabled: "/etc/nginx/sites-enabled/local-ai-ollama-api"
+open_webui_proxy_ollama_auth_map_file: "/etc/nginx/conf.d/local-ai-ollama-api-auth.conf"
+
 open_webui_proxy_certificate_name: "local-ai-platform-{{ open_webui_proxy_domain | replace('.', '-') }}"
 open_webui_proxy_certificate_dir: "/etc/letsencrypt/live/{{ open_webui_proxy_certificate_name }}"
 open_webui_proxy_credentials_file: "/etc/letsencrypt/cloudflare-local-ai-platform.ini"
