@@ -1,17 +1,22 @@
 # Managed by Ansible: local-ai-platform
-# Both listeners are restricted to the current Tailscale IPv4 address.
+# Listeners use the detected LAN and Tailscale IPv4 addresses.
 
 server {
-    listen {{ open_webui_proxy_tailscale_ip }}:80;
+{% for listen_ip in open_webui_proxy_listen_ips %}
+    listen {{ listen_ip }}:80;
+{% endfor %}
     server_name {{ open_webui_proxy_domain }};
 
     return 301 https://$host$request_uri;
 }
 
 server {
-    listen {{ open_webui_proxy_tailscale_ip }}:443 ssl http2;
+{% for listen_ip in open_webui_proxy_listen_ips %}
+    listen {{ listen_ip }}:443 ssl;
+{% endfor %}
     server_name {{ open_webui_proxy_domain }};
 
+    http2 on;
     server_tokens off;
 
     ssl_certificate     {{ open_webui_proxy_certificate_dir }}/fullchain.pem;

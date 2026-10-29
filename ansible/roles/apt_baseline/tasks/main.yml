@@ -3,10 +3,11 @@
   ansible.builtin.assert:
     that:
       - ansible_facts['distribution'] == 'Debian'
-      - ansible_facts['distribution_major_version'] | int == 12
+      - ansible_facts['distribution_major_version'] | int in [12, 13]
+      - ansible_facts['distribution_release'] in ['bookworm', 'trixie']
     fail_msg: >-
-      This repository-component task supports Debian 12 only.
-      No repository changes should be made on other operating systems.
+      The APT baseline supports Debian 12 (bookworm) and Debian 13 (trixie)
+      only. No repository changes should be made on other operating systems.
 
 - name: Read traditional Debian APT sources
   ansible.builtin.slurp:
@@ -16,10 +17,10 @@
 - name: Validate expected official Debian repositories
   ansible.builtin.assert:
     that:
-      - "'deb http://deb.debian.org/debian/' in (apt_sources_content.content | b64decode)"
-      - "'security.debian.org/debian-security' in (apt_sources_content.content | b64decode)"
+      - "'deb http://deb.debian.org/debian/ ' ~ ansible_facts['distribution_release'] in (apt_sources_content.content | b64decode)"
+      - "'security.debian.org/debian-security ' ~ ansible_facts['distribution_release'] ~ '-security' in (apt_sources_content.content | b64decode)"
     fail_msg: >-
-      Expected Debian 12 repository entries were not found.
+      Expected official Debian repositories for the detected release were not found.
       No repository changes should be made.
 
 - name: Add contrib to official Debian repository entries when missing

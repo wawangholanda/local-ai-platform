@@ -31,6 +31,33 @@
   ansible.builtin.set_fact:
     open_webui_proxy_tailscale_ip: "{{ open_webui_proxy_tailscale_ipv4.stdout_lines | first }}"
 
+- name: Validate the detected LAN IPv4 address
+  ansible.builtin.assert:
+    that:
+      - ansible_default_ipv4.address is defined
+      - ansible_default_ipv4.address | trim is match('^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])[.]){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$')
+    fail_msg: "Ansible could not detect a usable default-route LAN IPv4 address."
+
+- name: Build unique Open WebUI Nginx listener addresses
+  ansible.builtin.set_fact:
+    open_webui_proxy_listen_ips: >-
+      {{
+        [
+          ansible_default_ipv4.address | trim,
+          open_webui_proxy_tailscale_ip | trim
+        ] | unique | list
+      }}
+
+- name: Build unique Ollama API Nginx listener addresses
+  ansible.builtin.set_fact:
+    open_webui_proxy_ollama_listen_ips: >-
+      {{
+        [
+          ansible_default_ipv4.address | trim,
+          open_webui_proxy_tailscale_ip | trim
+        ] | unique | list
+      }}
+
 - name: Wait for Open WebUI to respond on loopback
   ansible.builtin.wait_for:
     host: 127.0.0.1

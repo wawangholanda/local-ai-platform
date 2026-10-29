@@ -1,15 +1,19 @@
 # Managed by Ansible: local-ai-platform.
-# The listener is restricted to the host's Tailscale IPv4 address.
+# Listeners are restricted to the detected LAN and Tailscale IPv4 addresses.
 
 server {
-    listen {{ open_webui_proxy_tailscale_ip }}:80;
+{% for listen_ip in open_webui_proxy_ollama_listen_ips %}
+    listen {{ listen_ip }}:80;
+{% endfor %}
     server_name {{ open_webui_proxy_ollama_domain }};
 
     return 301 https://$host$request_uri;
 }
 
 server {
-    listen {{ open_webui_proxy_tailscale_ip }}:443 ssl;
+{% for listen_ip in open_webui_proxy_ollama_listen_ips %}
+    listen {{ listen_ip }}:443 ssl;
+{% endfor %}
     server_name {{ open_webui_proxy_ollama_domain }};
 
     server_tokens off;
