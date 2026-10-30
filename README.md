@@ -11,7 +11,7 @@ The repository is the source of truth for host configuration, container deployme
 | Component | Current configuration |
 |---|---|
 | Host | `debian12ai` |
-| Operating system | Debian GNU/Linux 12 (Bookworm) |
+| Operating system | Debian GNU/Linux 13 |
 | LAN address | `192.168.1.4` |
 | Tailscale IPv4 | `100.100.83.33` (current; may change if the node identity changes) |
 | GPU | NVIDIA T600, 4 GiB VRAM |
